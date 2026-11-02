@@ -1,0 +1,98 @@
+name: Diagnose algorithm diversity and archive quality from frozen simulator evidence
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-diversity-diagnosis.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  analyze-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch immutable complete 30x100 four-solver evidence (run 41507243548)
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41507243548
+          github-token: ${{ github.token }}
+          pattern: v3-confirm-*
+          path: immutable-data
+          merge-multiple: false
+      - name: Recheck all 25 complete runs and quantify candidate diversity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,collections,pathlib,math,statistics
+          base=pathlib.Path('immutable-data')
+          sums=list(base.rglob('*_summary.csv'))
+          candidates=list(base.rglob('*_replays.csv'))
+          assert len(sums)==25 and len(candidates)==25,(len(sums),len(candidates))
+          rows=[]
+          for p in sums:
+              with p.open(newline='') as f:rows+=list(csv.DictReader(f))
+          expected={'FLA-3W','NSGA-II','MLEAO','DAG-Pareto-FLA[v3-archive]'}
+          assert len(rows)==100
+          groups=collections.defaultdict(list)
+          for r in rows:
+              wf=r['workflow'];alg=r['algorithm'];seed=int(r['seed'])
+              assert wf in ('Montage_25','Sipht_30','CyberShake_30','Epigenomics_24','Inspiral_30')
+              assert alg in expected and seed in range(1,6)
+              evals=int(r['captured_evaluations'])
+              distinct=int(r['distinct_observed'])
+              replayed=int(r['replayed'])
+              nd=int(r['sim_nondominated'])
+              assert evals>0 and 0<replayed<=distinct<=evals
+              assert 0<nd<=replayed
+              assert math.isfinite(float(r['sim_hv'])) and float(r['sim_hv'])>0
+              groups[(wf,alg)].append(r)
+          assert len(groups)==20 and all(len(v)==5 for v in groups.values())
+          out=[
+            '# FLA optimization diversity audit (immutable actual experiment evidence)',
+            '',
+            'Source: GitHub Actions 41507243548; five families, five paired seeds, 30x100 searches.',
+            'All indicators below derive from captured objective evaluations and simulator replays.',
+            'Number of visited assignments is DISTINCT, not merely archive size.',
+            'HV values are reference-dependent; cross-workflow HV magnitudes are not comparable.',
+            '',
+            '| Workflow | Algorithm | Mean distinct/evaluated % | Mean planned-ND/evaluated % | Mean replayed fronts | Mean simulated-ND points | Mean simulated HV |',
+            '|---|---|---:|---:|---:|---:|---:|']
+          def mean(x,k):return statistics.mean(float(r[k]) for r in x)
+          ag=collections.defaultdict(list)
+          for (wf,alg),g in sorted(groups.items()):
+              d=statistics.mean(100*int(r['distinct_observed'])/int(r['captured_evaluations']) for r in g)
+              nd=statistics.mean(100*int(r['replayed'])/int(r['captured_evaluations']) for r in g)
+              h=mean(g,'sim_hv')
+              out.append(f'| {wf} | {alg} | {d:.2f} | {nd:.2f} | {mean(g,"replayed"):.1f} | {mean(g,"sim_nondominated"):.1f} | {h:.3f} |')
+              ag[alg]+=g
+          out+=['','## Aggregate diversity across all 25 paired cases','',
+                '| Algorithm | Mean unique schedules / evaluations % | Mean planned ND schedules | Mean simulator ND schedules |',
+                '|---|---:|---:|---:|']
+          for alg in sorted(ag):
+              g=ag[alg]
+              u=statistics.mean(100*int(r['distinct_observed'])/int(r['captured_evaluations']) for r in g)
+              out.append(f'| {alg} | {u:.3f} | {mean(g,"replayed"):.2f} | {mean(g,"sim_nondominated"):.2f} |')
+          out+=['',
+                'These are descriptive diagnostics only, not a validated causal explanation for algorithm rankings.',
+                'The archive is filtered using PLANNED dominance before all surviving candidates are simulator-replayed.']
+          report=pathlib.Path('reports/diversity_diagnostic.md')
+          report.write_text('\n'.join(out)+'\n',encoding='utf-8')
+          with pathlib.Path('reports/diversity_raw.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(rows[0]))
+              w.writeheader();w.writerows(rows)
+          print(report.read_text())
+          PY
+          cat reports/diversity_diagnostic.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload quantified search and archive evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-diversity-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
