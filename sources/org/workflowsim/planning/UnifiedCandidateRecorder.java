@@ -49,6 +49,8 @@ public final class UnifiedCandidateRecorder {
         public int distinctAssignments() { return unique.size(); }
         public int plannedNondominatedAssignments() { return plannedFront.size(); }
         public List<Event> events() { return events; }
+        /** All unique evaluated assignments, including planning-dominated ones. */
+        public List<Event> uniqueEvents() { return unique; }
         public List<Event> plannedFront() { return plannedFront; }
         public List<double[]> frontPoints() {
             List<double[]> out = new ArrayList<>();
