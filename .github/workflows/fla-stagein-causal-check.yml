@@ -1,0 +1,172 @@
+name: Independent cross-algorithm test of stage-in-aware optimization on FLA-3W
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-stagein-causal-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  optimize-and-replay:
+    name: FLA-3W stage-in ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Sipht_30, Epigenomics_24, Inspiral_30]
+        seed: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build actual source and record commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Matched 3-weight FLA portfolios with old and new objective predictors
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in old stagein; do
+            if [ "$mode" = stagein ]; then useStageIn=true; else useStageIn=false; fi
+            java -Dworkflowsim.planningStageInAware="$useStageIn" \
+              -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+              "Output&Results/flaimpact_${{ matrix.workflow }}_s${{ matrix.seed }}_${mode}" \
+              'fla-only' 2>&1 | tee "ci-logs/${mode}.log"
+          done
+      - name: Check identical evaluation budget and exact independent replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv, pathlib, math
+          files=list(pathlib.Path('Output&Results').glob('flaimpact_*_summary.csv'))
+          assert len(files)==2,len(files)
+          modes=set()
+          for path in files:
+              mode='stagein' if path.stem.endswith('_stagein_summary') else 'old'
+              modes.add(mode)
+              with path.open(newline='') as f: rows=list(csv.DictReader(f))
+              assert len(rows)==1 and rows[0]['algorithm']=='FLA-3W'
+              assert int(rows[0]['evaluations'])==int(rows[0]['captured_evaluations'])==3006
+              assert int(rows[0]['replayed'])>0
+              prefix=str(path).removesuffix('_summary.csv')
+              with open(prefix+'_replays.csv',newline='') as f: points=list(csv.DictReader(f))
+              assert len(points)==int(rows[0]['replayed'])
+              for r in points:
+                  for k in ('sim_makespan','sim_cost','planned_makespan','planned_cost'):
+                      assert math.isfinite(float(r[k])) and float(r[k])>0
+                  for k in ('makespan','cost'):
+                      a,b=(float(r[x+'_'+k]) for x in ('planned','independent_planned'))
+                      assert abs(a-b)<=1e-6*max(1,abs(a),abs(b))
+          assert modes=={'old','stagein'}
+          print('PASS: 2 FLA-3W searches, equal 3006 budgets, independent decoder consistency and simulator replay')
+          PY
+      - name: Upload paired raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flamodel-impact-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/flaimpact_*_summary.csv
+            Output&Results/flaimpact_*_replays.csv
+          if-no-files-found: warn
+          retention-days: 60
+
+  aggregate:
+    name: Frozen-HV causal model comparison for FLA-3W
+    needs: [optimize-and-replay]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: flamodel-impact-*-${{ github.run_id }}
+          path: inputs
+          merge-multiple: false
+      - name: Compute paired simulated HV and direction of effect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,collections,pathlib,statistics,math
+          files=list(pathlib.Path('inputs').rglob('flaimpact_*_replays.csv'))
+          assert len(files)==50, f'Expected 50 actual replay files, observed {len(files)}'
+          groups=collections.defaultdict(list)
+          for p in files:
+              mode='stagein' if p.stem.endswith('_stagein_replays') else 'old'
+              with p.open(newline='') as f: rows=list(csv.DictReader(f))
+              assert rows and all(r['algorithm']=='FLA-3W' for r in rows)
+              for r in rows:
+                  groups[(r['workflow'],int(r['seed']),mode)].append((float(r['sim_makespan']),float(r['sim_cost'])))
+          workflows=sorted({x[0] for x in groups})
+          assert len(groups)==50 and len(workflows)==5
+          refs={}
+          for wf in workflows:
+              values=[pt for (name,_,_),arr in groups.items() if name==wf for pt in arr]
+              refs[wf]=(max(p[0] for p in values)*1.05+1,max(p[1] for p in values)*1.05+1)
+          def nd(pts):
+              unique=sorted(set(pts))
+              return [p for p in unique if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in unique)]
+          def hv(pts,ref):
+              value=0;prev=ref[1]
+              for mk,co in nd(pts):
+                  if co<prev:
+                      value+=(ref[0]-mk)*(prev-co)
+                      prev=co
+              return value
+          report=['# Is stage-in-aware optimization beneficial for MATLAB-adapted three-weight FLA?',
+                 '',
+                 'Each pair uses the same adapted FLA-3W scalar-weight portfolio (0.2/0.5/0.8), three independent weighted runs, same seed, 3006 total evaluations.',
+                 'Only the planning objective function differs; the actual WorkflowSim simulation is unchanged.',
+                 'Every visited PLANNED nondominated assignment is replayed; planner-dominated assignments are not exhaustively simulated.',
+                 'A single frozen simulator-HV reference is used within each workflow across both variants and all 5 seeds.',
+                 '',
+                 '| Workflow | Mean old-model HV | Mean stage-in-aware HV | Mean paired % change | Better seeds |',
+                 '|---|---:|---:|---:|---:|']
+          raw=[]
+          pool=[]
+          for wf in workflows:
+              differences=[];wins=0;before=[];after=[]
+              for seed in range(1,6):
+                  a=hv(groups[(wf,seed,'old')],refs[wf])
+                  b=hv(groups[(wf,seed,'stagein')],refs[wf])
+                  change=100*(b/max(1e-12,a)-1)
+                  differences.append(change);before.append(a);after.append(b)
+                  wins+=b>a+1e-9
+                  raw.append(dict(workflow=wf,seed=seed,old_hv=a,stagein_hv=b,
+                      paired_pct=change,reference_m=refs[wf][0],reference_c=refs[wf][1]))
+              pool.extend(differences)
+              report.append(f'| {wf} | {statistics.mean(before):.4f} | {statistics.mean(after):.4f} | {statistics.mean(differences):+.3f}% | {wins}/5 |')
+          report+=['',f'- Pooled 25 paired observations: {statistics.mean(pool):+.3f}% mean percent change; {sum(x>0 for x in pool)}/25 improvements.',
+                   '- This is an external replication of the model effect with adapted scalar FLA, NOT evidence of a superior new metaheuristic.',
+                   '- Small set of DAG instances and 5 seeds per workflow limit external validity.']
+          with pathlib.Path('reports/fla_stagein_search_impact.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(raw[0]))
+              w.writeheader();w.writerows(raw)
+          pathlib.Path('reports/fla_stagein_search_impact.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/fla_stagein_search_impact.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all comparative metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-model-search-impact-report-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 60
