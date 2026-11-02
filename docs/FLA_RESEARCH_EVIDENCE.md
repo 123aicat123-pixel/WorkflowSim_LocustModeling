@@ -60,6 +60,35 @@ A workflow-resampled exploratory bootstrap yields these 95% intervals:
 
 **Caveat:** there are only five workflow families; resampled uncertainty intervals are exploratory. Seed comparisons within one DAG are correlated as workflow-family evidence, and multiple iterations of variant selection were tried. These are NOT definitive manuscript p-values. [Statistical analysis](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41511827222).
 
+## Larger unseen DAG instances (50–60 tasks)
+
+A dedicated out-of-sample scalability run used five larger workflow instances, three paired seeds, 30x100 evaluations per solver, and one frozen HV reference per family.
+
+| V6 compared with | Mean paired simulator-HV change across 15 cases | V6 wins |
+|---|---:|---:|
+| NSGA-II | +0.033% | 7/15 |
+| FLA-3W | +4.094% | 12/15 |
+| reconstructed MLEAO | +15.558% | 14/15 |
+
+These data corroborate FLA/ML-based baseline improvements at larger task counts but still show **no overall superiority to NSGA-II**. Inspiral_50 favored NSGA-II by ~2.54%; Montage_50 favored v6 by ~3.09% in paired relative HV. [Larger-DAG replay and frozen HV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41511726130).
+
+## Search efficiency and end-to-end deliverable
+
+From the same 25 matched 30x100 runs:
+
+- V6-pop: **98.269%** distinct visited assignments, mean 23.44 planned-ND replay candidates, median recorded optimizer search time **445 ms**.
+- NSGA-II: **88.283%** distinct, mean 26.92 planned-ND candidates, median optimizer search time **420 ms**.
+- FLA-3W: **60.225%** distinct, mean 30.56 planned-ND candidates, median optimizer search time **450 ms**.
+
+The v6 novelty repair is not evaluation-free in CPU time; it only adds **zero additional objective evaluations**. Measurements are indicative across shared GitHub runners, not controlled CPU microbenchmarking. [Runtime and uniqueness audit](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41512670998).
+
+The selected variant has a dedicated explicit entry point, `DAGParetoFLAV6Example.java`, which sets all research options and runs an actual WorkflowSim simulation. The legacy `DAG_PARETO_FLA` behavior is NOT silently reconfigured; using the standalone v6 entry point is necessary for an unmistakable version selection. [Executable end-to-end smoke test](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41512522545).
+
+```bash
+java -cp 'build/classes:lib/*' \
+  org.workflowsim.examples.planning.DAGParetoFLAV6Example Montage_25 1 30 100
+```
+
 ## Exact commands for independent reproduction (Linux GitHub checkout)
 
 Compile all Java files fresh, not from stale `bin`:
