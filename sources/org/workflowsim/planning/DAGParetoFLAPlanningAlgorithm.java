@@ -39,6 +39,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_ARCHIVE_SSO = true;
     public static boolean CONFIG_ADAPTIVE_MUTATION = true;
     public static boolean CONFIG_ADAPTIVE_PREFERENCE = true;
+    public static boolean CONFIG_GLOBAL_SURVIVOR_SELECTION = false;
+    public static boolean CONFIG_RANDOM_IMMIGRANTS = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -98,6 +100,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final Long seed;
     private final boolean enforcePes;
     private final boolean useDag, useCross, useArchiveSso, useAdaptiveMutation, useAdaptivePreference;
+    private final boolean useGlobalSelection, useImmigrants;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -124,6 +127,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useArchiveSso = CONFIG_ARCHIVE_SSO;
         useAdaptiveMutation = CONFIG_ADAPTIVE_MUTATION;
         useAdaptivePreference = CONFIG_ADAPTIVE_PREFERENCE;
+        useGlobalSelection = CONFIG_GLOBAL_SURVIVOR_SELECTION;
+        useImmigrants = CONFIG_RANDOM_IMMIGRANTS;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -203,13 +208,18 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                             : (isG1 ? leader1 : leader2);
                 }
                 int[] genes = current.genes.clone();
-                if (phase == 0) {
-                    diffusionGenes(genes, ref.genes, dof);
+                if(useImmigrants && random.nextDouble()<0.10) {
+                    // Budget unchanged: exactly one evaluation per child.
+                    for(int k=0;k<n;k++) genes[k]=allowed[k][random.nextInt(allowed[k].length)];
                 } else {
-                    double pressure = Math.exp(-(double) rank[i] / Math.max(1, maxRank));
-                    guidedGenes(genes, ref.genes, pressure);
+                    if (phase == 0) {
+                        diffusionGenes(genes, ref.genes, dof);
+                    } else {
+                        double pressure = Math.exp(-(double) rank[i] / Math.max(1, maxRank));
+                        guidedGenes(genes, ref.genes, pressure);
+                    }
+                    mutate(genes, mutationProbability);
                 }
-                mutate(genes, mutationProbability);
                 Solution child = new Solution(genes, evaluator.evaluate(genes));
                 archiveConsider(child); // ALL visited children, even if not selected
                 (isG1 ? children1 : children2).add(child);
@@ -225,9 +235,21 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             int[] globalRank = nondominatedRank(union);
             double[] globalCrowd = crowdingDistance(union, globalRank);
             Bounds b = new Bounds(union);
-            group1 = selectGroup(union1, 0, group1Size, globalRank, globalCrowd, b, alpha1);
-            group2 = selectGroup(union2, union1.size(), populationSize-group1Size,
-                    globalRank, globalCrowd, b, 1.0-alpha1);
+            if(useGlobalSelection) {
+                // Experimental NSGA-style global Pareto elitism before the next
+                // two-group FLA phase; NOT an original MATLAB FLA equation.
+                List<Solution> survivors=selectGroup(union,0,populationSize,
+                        globalRank,globalCrowd,b,0.5);
+                survivors.sort(Comparator.comparingDouble((Solution x)->preference(x,alpha1,b))
+                        .thenComparingDouble(x->x.makespan)
+                        .thenComparingDouble(x->x.cost));
+                group1=new ArrayList<>(survivors.subList(0,group1Size));
+                group2=new ArrayList<>(survivors.subList(group1Size,populationSize));
+            } else {
+                group1 = selectGroup(union1, 0, group1Size, globalRank, globalCrowd, b, alpha1);
+                group2 = selectGroup(union2, union1.size(), populationSize-group1Size,
+                        globalRank, globalCrowd, b, 1.0-alpha1);
+            }
             if (useAdaptivePreference && t % 10 == 0 && !archive.isEmpty()) {
                 adaptPreference();
             }

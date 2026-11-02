@@ -171,7 +171,8 @@ public final class FLAResearchExperiment {
     }
     private static Run runDag(String dax,long seed,int pop,int gens,String variant) {
         final List<String> supported=Arrays.asList("all","no-dag","no-cross",
-                "no-archive-sso","no-adaptive-mutation","no-adaptive-preference","minimal");
+                "no-archive-sso","no-adaptive-mutation","no-adaptive-preference","minimal",
+                "v2-global","v2-immigrants","v2");
         if (!supported.contains(variant)) throw new IllegalArgumentException("Unknown ablation: " + variant);
         final boolean minimal="minimal".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_DAG_GUIDANCE = !minimal && !"no-dag".equals(variant);
@@ -179,6 +180,12 @@ public final class FLAResearchExperiment {
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_SSO = !minimal && !"no-archive-sso".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_MUTATION = !minimal && !"no-adaptive-mutation".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = !minimal && !"no-adaptive-preference".equals(variant);
+        boolean isV2=variant.startsWith("v2");
+        if(isV2) DAGParetoFLAPlanningAlgorithm.CONFIG_CROSS_GROUP_DO=false;
+        DAGParetoFLAPlanningAlgorithm.CONFIG_GLOBAL_SURVIVOR_SELECTION =
+                "v2-global".equals(variant) || "v2".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_RANDOM_IMMIGRANTS =
+                "v2-immigrants".equals(variant) || "v2".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
         DAGParetoFLAPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = null;
         UnifiedCandidateRecorder.begin((long)pop*(gens+2));

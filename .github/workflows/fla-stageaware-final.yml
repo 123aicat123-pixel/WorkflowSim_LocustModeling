@@ -1,18 +1,6 @@
 name: Stage-in-aware FLA 30x100 five-workflow experiment
 
 on:
-  push:
-    branches: [fla-baseline]
-    paths:
-      - '.github/workflows/fla-stageaware-final.yml'
-      - 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java'
-      - 'sources/org/workflowsim/planning/UnifiedCandidateRecorder.java'
-      - 'sources/org/workflowsim/planning/StageInAwareScheduleEvaluator.java'
-      - 'sources/org/workflowsim/planning/FLAScheduleEvaluator.java'
-      - 'sources/org/workflowsim/planning/FLABaselinePlanningAlgorithm.java'
-      - 'sources/org/workflowsim/planning/DAGParetoFLAPlanningAlgorithm.java'
-      - 'sources/org/workflowsim/planning/NSGAIIPlanningAlgorithm.java'
-      - 'sources/org/workflowsim/planning/MLEAOPlanningAlgorithm.java'
   workflow_dispatch:
 
 permissions:
