@@ -45,6 +45,8 @@ import org.workflowsim.WorkflowPlanner;
 import org.workflowsim.planning.LIWSAPlanningAlgorithm;
 import org.workflowsim.planning.MLEAOPlanningAlgorithm;
 import org.workflowsim.planning.NSGAIIPlanningAlgorithm;
+import org.workflowsim.planning.FLABaselinePlanningAlgorithm;
+import org.workflowsim.planning.DAGParetoFLAPlanningAlgorithm;
 import org.workflowsim.utils.ClusteringParameters;
 import org.workflowsim.utils.OverheadParameters;
 import org.workflowsim.utils.Parameters;
@@ -551,6 +553,14 @@ public class LIWSABenchmarkExample {
             NSGAIIPlanningAlgorithm.CONFIG_GENERATION_COUNT = generationCount;
             NSGAIIPlanningAlgorithm.CONFIG_RANDOM_SEED = seed;
             NSGAIIPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = warmStartSeeds;
+            FLABaselinePlanningAlgorithm.CONFIG_POPULATION_SIZE = populationSize;
+            FLABaselinePlanningAlgorithm.CONFIG_GENERATION_COUNT = generationCount;
+            FLABaselinePlanningAlgorithm.CONFIG_RANDOM_SEED = seed;
+            FLABaselinePlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = warmStartSeeds;
+            DAGParetoFLAPlanningAlgorithm.CONFIG_POPULATION_SIZE = populationSize;
+            DAGParetoFLAPlanningAlgorithm.CONFIG_GENERATION_COUNT = generationCount;
+            DAGParetoFLAPlanningAlgorithm.CONFIG_RANDOM_SEED = seed;
+            DAGParetoFLAPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = warmStartSeeds;
 
             int totalVMs = 0;
             for (double[] t : VM_TYPES) { totalVMs += (int) t[5]; }
@@ -609,6 +619,14 @@ public class LIWSABenchmarkExample {
                     && NSGAIIPlanningAlgorithm.lastRun != null) {
                 frontPoints = NSGAIIPlanningAlgorithm.lastRun.paretoFrontPoints;
                 searchWall = NSGAIIPlanningAlgorithm.lastRun.searchWallClockMillis;
+            } else if (planningAlg == Parameters.PlanningAlgorithm.FLA_SCALAR
+                    && FLABaselinePlanningAlgorithm.lastRun != null) {
+                frontPoints = FLABaselinePlanningAlgorithm.lastRun.paretoFrontPoints;
+                searchWall = FLABaselinePlanningAlgorithm.lastRun.searchWallClockMillis;
+            } else if (planningAlg == Parameters.PlanningAlgorithm.DAG_PARETO_FLA
+                    && DAGParetoFLAPlanningAlgorithm.lastRun != null) {
+                frontPoints = DAGParetoFLAPlanningAlgorithm.lastRun.paretoFrontPoints;
+                searchWall = DAGParetoFLAPlanningAlgorithm.lastRun.searchWallClockMillis;
             }
             r.searchWallClockMillis = searchWall;
             if (frontPoints != null) {

@@ -44,7 +44,7 @@ public class Parameters {
      * 
      */
     public enum PlanningAlgorithm{
-        INVALID, RANDOM, HEFT, DHEFT, LIWSA, MLEAO, LIWSAML, NSGAII
+        INVALID, RANDOM, HEFT, DHEFT, LIWSA, MLEAO, LIWSAML, NSGAII, FLA_SCALAR, DAG_PARETO_FLA
     }
     
     /**

@@ -28,6 +28,8 @@ import org.workflowsim.planning.LIWSAMLPlanningAlgorithm;
 import org.workflowsim.planning.LIWSAPlanningAlgorithm;
 import org.workflowsim.planning.MLEAOPlanningAlgorithm;
 import org.workflowsim.planning.NSGAIIPlanningAlgorithm;
+import org.workflowsim.planning.FLABaselinePlanningAlgorithm;
+import org.workflowsim.planning.DAGParetoFLAPlanningAlgorithm;
 import org.workflowsim.planning.RandomPlanningAlgorithm;
 import org.workflowsim.utils.Parameters;
 import org.workflowsim.utils.Parameters.PlanningAlgorithm;
@@ -205,6 +207,12 @@ public final class WorkflowPlanner extends SimEntity {
                 break;
             case NSGAII:
                 planner = new NSGAIIPlanningAlgorithm();
+                break;
+            case FLA_SCALAR:
+                planner = new FLABaselinePlanningAlgorithm();
+                break;
+            case DAG_PARETO_FLA:
+                planner = new DAGParetoFLAPlanningAlgorithm();
                 break;
             default:
                 planner = null;
