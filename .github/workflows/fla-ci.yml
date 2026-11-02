@@ -1,0 +1,62 @@
+name: FLA Java CI
+
+on:
+  push:
+    branches:
+      - fla-baseline
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    name: Compile Java and check Montage_25 decoder
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout fla-baseline
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare build directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs "Output&Results"
+          java -version 2>&1 | tee ci-logs/java-version.log
+
+      - name: Compile all Java sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          find sources examples -type f -name '*.java' | sort > ci-logs/source-files.txt
+          echo "Compiling $(wc -l < ci-logs/source-files.txt) Java source files"
+          javac -nowarn -encoding UTF-8 -cp "lib/*" -d build/classes @ci-logs/source-files.txt 2>&1 | tee ci-logs/compile.log
+
+      - name: Check Montage_25 decoder against WorkflowSim
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp "build/classes:lib/*" \
+            org.workflowsim.examples.planning.DecoderFidelityCheck \
+            "Montage_25" "1" "Output&Results/decoder_fidelity_ci.csv" \
+            2>&1 | tee ci-logs/decoder-fidelity.log
+          test -s "Output&Results/decoder_fidelity_ci.csv"
+
+      - name: Upload logs and experiment results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-montage25-ci-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/decoder_fidelity_ci.csv
+            Output&Results/decoder_fidelity_ci_summary.*
+          if-no-files-found: warn
+          retention-days: 14
