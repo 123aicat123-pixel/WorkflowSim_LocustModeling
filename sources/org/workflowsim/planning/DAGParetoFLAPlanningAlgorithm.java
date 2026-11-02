@@ -5,6 +5,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +51,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     /** v5 ablations; disabled unless the experiment selects them. */
     public static boolean CONFIG_ARCHIVE_DAG_BLOCK = false;
     public static boolean CONFIG_ARCHIVE_PREFERENCE_DONOR = false;
+    /** v6: restore novelty BEFORE evaluating a proposed FLA offspring. */
+    public static boolean CONFIG_NOVELTY_REPAIR = false;
+    public static boolean CONFIG_NOVELTY_GLOBAL_HISTORY = false;
+    public static boolean CONFIG_NOVELTY_STRONG_REPAIR = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -111,6 +117,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useGlobalSelection, useImmigrants;
     private final boolean useResourceAwareMutation, useArchiveRecombination, useParetoCrowdingSelection;
     private final boolean useArchiveDagBlock, usePreferenceDonor;
+    private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -145,6 +152,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useParetoCrowdingSelection = CONFIG_PARETO_CROWDING_SELECTION;
         useArchiveDagBlock = CONFIG_ARCHIVE_DAG_BLOCK;
         usePreferenceDonor = CONFIG_ARCHIVE_PREFERENCE_DONOR;
+        useNoveltyRepair = CONFIG_NOVELTY_REPAIR;
+        useGlobalHistory = CONFIG_NOVELTY_GLOBAL_HISTORY;
+        useStrongRepair = CONFIG_NOVELTY_STRONG_REPAIR;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -182,6 +192,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         archive.clear(); searchTrace.clear();
         doCount = 0; eoCount = 0; ssoCount = 0; alpha1 = 0.85;
         for (Solution s : initial) { archiveConsider(s); }
+        final Set<String> globalVisited = useNoveltyRepair && useGlobalHistory
+                ? new HashSet<String>() : null;
+        if (globalVisited != null) {
+            for (Solution s : initial) globalVisited.add(Arrays.toString(s.genes));
+        }
         saveTrace(0);
 
         for (int t = 1; t <= generations; t++) {
@@ -210,6 +225,15 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
             List<Solution> children1 = new ArrayList<>();
             List<Solution> children2 = new ArrayList<>();
+            final Set<String> generationVisited;
+            if (useNoveltyRepair) {
+                generationVisited = useGlobalHistory ? globalVisited : new HashSet<String>();
+                if (!useGlobalHistory) {
+                    for (Solution p : parents) generationVisited.add(Arrays.toString(p.genes));
+                }
+            } else {
+                generationVisited = null;
+            }
             for (int i = 0; i < populationSize; i++) {
                 Solution current = parents.get(i);
                 boolean isG1 = i < group1Size;
@@ -245,6 +269,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         mutate(genes, mutationProbability);
                     }
                 }
+                if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
                 Solution child = new Solution(genes, evaluator.evaluate(genes));
                 archiveConsider(child); // ALL visited children, even if not selected
                 (isG1 ? children1 : children2).add(child);
@@ -584,6 +609,35 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             if (other >= focal) other++;
             genes[other] = guide.genes[other];
         }
+    }
+
+    /**
+     * v6 novelty restoration: avoid repeated genotypes without increasing the
+     * number of objective evaluations. A repair is deliberately stochastic and
+     * does not use any additional fitness computation or simulated outcome.
+     * If every sampled alternative is seen, keep the original FLA child.
+     */
+    private void repairNoveltyBeforeEvaluation(int[] child, Set<String> visited) {
+        if (visited.add(Arrays.toString(child))) return;
+        int attempts = useStrongRepair ? 18 : 8;
+        for (int tryIndex = 0; tryIndex < attempts; tryIndex++) {
+            int[] candidate=child.clone();
+            int changes=(useStrongRepair && tryIndex>=4) ? 2 + random.nextInt(2) : 1;
+            for(int t=0;t<changes;t++) {
+                int k=random.nextInt(n);
+                int[] options=allowed[k];
+                if(options.length<2)continue;
+                int idx=random.nextInt(options.length-1);
+                if(options[idx]==candidate[k]) idx=options.length-1;
+                if(options[idx]!=candidate[k]) candidate[k]=options[idx];
+            }
+            String signature=Arrays.toString(candidate);
+            if(visited.add(signature)) {
+                System.arraycopy(candidate,0,child,0,n);
+                return;
+            }
+        }
+        // Search space may be exhausted; do not fabricate a novel evaluation.
     }
 
     /** One different feasible VM gene, with per-molecule adaptive probability. */
