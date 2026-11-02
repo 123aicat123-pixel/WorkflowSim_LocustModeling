@@ -240,3 +240,26 @@ java -Dworkflowsim.planningStageInAware=true \
 **最新可复现 CI：** [fla-stagein-causal-check.yml](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/fla-stagein-causal-check.yml)。
 
 **最终解释边界：** 上述 HV 都是各自 experiment run 内的冻参考点指标，不可把不同表格的绝对 HV 混算。通过计划层非支配筛选的仿真回放仍非全候选 simulator Pareto 集。尚未进行 GitHub vs Windows 本地项目的 SHA-256 文件级对比。
+
+## 12. v5 DAG-connected archive transfer：负结果也保留
+
+[真实 CI：3 开发集工作流 × 3 paired seeds，四类 v5 archive transfer 算子](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41509862381)。
+
+设 v3-archive 为预先锁定的开发集控制组，仍按同一 3030 evaluations、stage-in-aware 解码器、规划非支配分配模拟回放、各工作流冻结 HV 参考点比较：
+
+| Tested variant | Mean paired simulated HV vs v3-archive | Positive cases |
+|---|---:|---:|
+| v5-dagblock (DAG-connected copy) | −2.677% | 4/9 |
+| v5-donor (preference-ranked archive donor) | −0.737% | 5/9 |
+| v5-both | −1.696% | 3/9 |
+
+**三种 v5 算子都没有超过控制组**，故未进入独立验证；这不能被包装为正向创新。代码和负结果保留供复现。
+
+## 13. 当前最终推荐的论文路线
+
+1. **优先研究评价器—搜索耦合。** 两种不同算法 NSGA-II 和改造 FLA-3W 的对照都有 25 组 paired data，分别为 21/25、22/25 的更高真实 simulated HV；Stage-in-aware 目标对 CyberShake 数据重负载工作流的改善尤其明显。以此构建假设和实验设计，比继续叠加尚未验证的 FLA 随机操作更合理。
+2. **暂时不宣称 FLA 新算法超越 NSGA-II。** v3-archive 的五工作流公平对照相对 NSGA-II 平均 paired HV 仍为 −3.146%；v4/v5 算子消融全部未显示更优的开发集平均结果。
+3. **研究证明仍未封闭。** 当前预算约 3000 次规划评价、同一个 VM 配置、5 DAG families 各一个有限规模实例、5 paired seeds；真实模拟回放只覆盖计划层 nondominated 的历史候选；FLA 经过离散转换，MLEAO 是重构。发表前应补充 20–30+ seeds、多尺寸、不同通信/价格与异构算力、统一本地/CI 环境以及显著性/区间估计。
+4. **完成版本封存和文件对账。** GitHub `fla-baseline` 为可独立编译运行的研发分支；未证明与用户的 Windows 本地目录完全一致。保留 repo SHA、Actions run ID、原始 CSV 和 Java 17 依赖，建议新建不可变研究 release/tag 以减少 artifact 过期带来的复现风险。
+
+**研究质量评价：** 目前可以作为一个严肃科研原型继续写实验方法与模型设计，但尚不能按“一篇新算法显著超越经典算法、可直接投稿一区”的标准下结论。
