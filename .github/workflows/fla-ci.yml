@@ -55,6 +55,14 @@ jobs:
             org.workflowsim.planning.UnifiedEvaluatorPropertiesTest \
             2>&1 | tee ci-logs/unified-evaluator-properties.log
 
+      - name: Validate stage-in-aware evaluator with handcrafted task/files/VMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp "build/classes:lib/*" \
+            org.workflowsim.planning.StageInAwareEvaluatorTest \
+            2>&1 | tee ci-logs/stagein-aware-regression.log
+
       - name: Check Montage_25 decoder against WorkflowSim
         shell: bash
         run: |

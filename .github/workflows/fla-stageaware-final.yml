@@ -65,13 +65,14 @@ jobs:
           assert len(rows)==4 and {r['algorithm'] for r in rows}==algorithms,rows
           all_evals=[]
           for r in rows:
+              assert r['actual_generations']
               e=int(r['evaluations']);all_evals.append(e)
-              assert 2950<=e<=3100,(r['algorithm'],e)
+              assert 2980<=e<=3060,(r['algorithm'],e)
               assert e==int(r['captured_evaluations']),(r['algorithm'],'missing evaluations')
               assert int(r['distinct_observed'])>=int(r['distinct_planned_nondominated'])
               assert int(r['replayed'])>0
               assert all(math.isfinite(float(r[k])) and float(r[k])>=0 for k in ('sim_hv','planned_hv'))
-          assert max(all_evals)-min(all_evals)<100,all_evals
+          assert max(all_evals)-min(all_evals)<=50,all_evals
           with (pathlib.Path(str(base)+'_replays.csv')).open(newline='') as f: candidates=list(csv.DictReader(f))
           assert len(candidates)==sum(int(r['replayed']) for r in rows),len(candidates)
           for r in candidates:
@@ -166,7 +167,7 @@ jobs:
             'Each workflow has a single frozen reference across all algorithms and seeds.',
             'All successful objective evaluations are passively captured; every distinct planned-nondominated assignment is replayed.',
             'Simulated nondominated sets are then derived independently from those replayed assignments.',
-            'Each solver uses approximately 3000 candidate evaluations (exact count in per-run CSV); identical warm starts disabled.',
+            'Each solver uses approximately 3000 candidate evaluations (exact count in per-run CSV); MLEAO is given extra generations to align EVALUATIONS; identical warm starts disabled.',
             'Scalar FLA is a three-weight portfolio, adapted from MATLAB version 1.0, not a native multiobjective FLA.',
             'DAG-FLA no-cross operator is a selected research variant; it must not be represented as confirmed superior.',
             'MLEAO is a disclosed reconstruction, not an exact source reproduction.',
