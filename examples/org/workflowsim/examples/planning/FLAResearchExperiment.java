@@ -41,6 +41,9 @@ public final class FLAResearchExperiment {
     private FLAResearchExperiment() {}
     /** Read-only optional diagnostic, disabled by default. */
     private static final int SCREENING_AUDIT_N = Integer.getInteger("dagfla.screeningAuditPerAlgorithm", 0);
+    /** Include equal planned objectives from distinct assignments in exhaustive audits. */
+    private static final boolean SCREENING_INCLUDE_TIES =
+            Boolean.getBoolean("dagfla.screeningAuditIncludeTies");
 
     private static final class Candidate {
         final double[] planned;
@@ -66,6 +69,7 @@ public final class FLAResearchExperiment {
         final List<Candidate> audited = new ArrayList<>();
         final List<String> auditStrata = new ArrayList<>();
         int dominatedPool;
+        int tiedPool;
         int newSimulatorNondominated;
         double auditHvGain;
         double simHv;
@@ -337,9 +341,22 @@ public final class FLAResearchExperiment {
             for(Candidate f:run.candidates) {
                 if(dominates(f.planned,c.planned)) { strict=true; break; }
             }
-            if(strict)dominated.add(c);
+            if(strict) {
+                dominated.add(c);
+                run.dominatedPool++;
+            } else if (SCREENING_INCLUDE_TIES) {
+                boolean tied=false;
+                for(Candidate f:run.candidates) {
+                    if(f.planned[0]==c.planned[0] && f.planned[1]==c.planned[1]) {
+                        tied=true;break;
+                    }
+                }
+                if(tied) {
+                    dominated.add(c);
+                    run.tiedPool++;
+                }
+            }
         }
-        run.dominatedPool=dominated.size();
         dominated.sort(Comparator.comparingDouble(c->normalizedDistance(c,run.candidates)));
         int take=Math.min(SCREENING_AUDIT_N,dominated.size());
         int nearest=take/2;
@@ -380,8 +397,8 @@ public final class FLAResearchExperiment {
         if(extraHv+1e-7*Math.max(1,Math.abs(run.simHv))<run.simHv)
             throw new IllegalStateException("Hypervolume lost after adding candidate points");
         System.out.printf(Locale.ROOT,
-                "SCREENING_AUDIT %s %s seed=%d strictDominated=%d sampled=%d nondominatedVsBase=%d hvBase=%.9f hvExtra=%.9f delta=%.9f%n",
-                wf,run.algorithm,seed,run.dominatedPool,run.audited.size(),
+                "SCREENING_AUDIT %s %s seed=%d strictDominated=%d plannedTies=%d sampled=%d nondominatedVsBase=%d hvBase=%.9f hvExtra=%.9f delta=%.9f%n",
+                wf,run.algorithm,seed,run.dominatedPool,run.tiedPool,run.audited.size(),
                 run.newSimulatorNondominated,run.simHv,extraHv,run.auditHvGain);
     }
 
@@ -389,12 +406,12 @@ public final class FLAResearchExperiment {
             throws IOException {
         try(BufferedWriter w=Files.newBufferedWriter(
                 Paths.get(prefix+"_screening_summary.csv"),StandardCharsets.UTF_8)) {
-            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\n");
+            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,planned_tie_pool,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\n");
             for(Run r:runs) {
                 double pct=100.0*r.auditHvGain/Math.max(1e-12,r.simHv);
                 w.write(String.format(Locale.ROOT,
-                    "%s,%s,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.8f%n",
-                    wf,r.algorithm,seed,r.distinctObservedAssignments,r.dominatedPool,
+                     "%s,%s,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.8f%n",
+                    wf,r.algorithm,seed,r.distinctObservedAssignments,r.dominatedPool,r.tiedPool,
                     r.audited.size(),r.newSimulatorNondominated,r.simHv,
                     r.simHv+r.auditHvGain,r.auditHvGain,pct));
             }
