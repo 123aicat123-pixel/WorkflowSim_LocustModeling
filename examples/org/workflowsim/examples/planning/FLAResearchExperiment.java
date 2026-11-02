@@ -58,8 +58,8 @@ public final class FLAResearchExperiment {
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 5) {
-            throw new IllegalArgumentException("Usage: FLAResearchExperiment WORKFLOW SEED POP GENS OUT_PREFIX");
+        if (args.length != 5 && args.length != 6) {
+            throw new IllegalArgumentException("Usage: FLAResearchExperiment WORKFLOW SEED POP GENS OUT_PREFIX [DAG_ABLATION]");
         }
         String wf = args[0];
         long seed = Long.parseLong(args[1]);
@@ -73,10 +73,14 @@ public final class FLAResearchExperiment {
         Log.disable();
         List<Run> runs = new ArrayList<>();
         final int cap = pop * (gens + 1) + 3 * pop + 6;
-        runs.add(runScalar(dax, seed, pop, gens));
-        runs.add(runDag(dax, seed, pop, gens));
-        runs.add(runNsga(dax, seed, pop, gens));
-        runs.add(runMleao(dax, seed, pop, gens));
+        if (args.length == 6) {
+            runs.add(runDag(dax, seed, pop, gens, args[5]));
+        } else {
+            runs.add(runScalar(dax, seed, pop, gens));
+            runs.add(runDag(dax, seed, pop, gens, "all"));
+            runs.add(runNsga(dax, seed, pop, gens));
+            runs.add(runMleao(dax, seed, pop, gens));
+        }
 
         for (Run run : runs) {
             if (run.evals <= 0 || run.evals > cap || run.candidates.isEmpty()) {
@@ -152,12 +156,16 @@ public final class FLAResearchExperiment {
         }
         return run;
     }
-    private static Run runDag(String dax,long seed,int pop,int gens) {
-        DAGParetoFLAPlanningAlgorithm.CONFIG_DAG_GUIDANCE = true;
-        DAGParetoFLAPlanningAlgorithm.CONFIG_CROSS_GROUP_DO = true;
-        DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_SSO = true;
-        DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_MUTATION = true;
-        DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = true;
+    private static Run runDag(String dax,long seed,int pop,int gens,String variant) {
+        final List<String> supported=Arrays.asList("all","no-dag","no-cross",
+                "no-archive-sso","no-adaptive-mutation","no-adaptive-preference","minimal");
+        if (!supported.contains(variant)) throw new IllegalArgumentException("Unknown ablation: " + variant);
+        final boolean minimal="minimal".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_DAG_GUIDANCE = !minimal && !"no-dag".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_CROSS_GROUP_DO = !minimal && !"no-cross".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_SSO = !minimal && !"no-archive-sso".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_MUTATION = !minimal && !"no-adaptive-mutation".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = !minimal && !"no-adaptive-preference".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
         DAGParetoFLAPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = null;
         LIWSABenchmarkExample.RunResult result = LIWSABenchmarkExample.runPlanning(
@@ -165,7 +173,7 @@ public final class FLAResearchExperiment {
                 Parameters.SchedulingAlgorithm.STATIC,"DAG-Pareto-FLA",seed,pop,gens,null);
         DAGParetoFLAPlanningAlgorithm.LastRunMetrics m = DAGParetoFLAPlanningAlgorithm.lastRun;
         if(result==null||m==null) throw new IllegalStateException("DAG-FLA failed");
-        Run r = new Run("DAG-Pareto-FLA");
+        Run r = new Run("DAG-Pareto-FLA" + ("all".equals(variant) ? "" : "["+variant+"]"));
         r.evals=Math.toIntExact(m.objectiveEvaluations);r.searchMs=m.searchWallClockMillis;
         append(r,m.paretoFrontPoints,m.paretoFrontAssignments);
         return r;
