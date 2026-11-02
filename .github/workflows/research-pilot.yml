@@ -1,8 +1,6 @@
 name: WorkflowSim research pilot (pre-FLA baselines)
 
 on:
-  push:
-    branches: [fla-baseline]
   workflow_dispatch:
 
 permissions:

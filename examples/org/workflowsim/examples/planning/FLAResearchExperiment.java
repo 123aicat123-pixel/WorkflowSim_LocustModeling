@@ -80,7 +80,8 @@ public final class FLAResearchExperiment {
             runs.add(runDag(dax, seed, pop, gens, args[5]));
         } else {
             runs.add(runScalar(dax, seed, pop, gens));
-            runs.add(runDag(dax, seed, pop, gens, "all"));
+            runs.add(runDag(dax, seed, pop, gens,
+                    System.getProperty("dagfla.comparisonVariant", "all")));
             runs.add(runNsga(dax, seed, pop, gens));
             runs.add(runMleao(dax, seed, pop, gens));
         }

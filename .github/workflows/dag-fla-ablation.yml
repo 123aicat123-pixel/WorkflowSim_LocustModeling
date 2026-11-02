@@ -1,12 +1,6 @@
 name: DAG-Pareto-FLA controlled operator ablation
 
 on:
-  push:
-    branches: [fla-baseline]
-    paths:
-      - '.github/workflows/dag-fla-ablation.yml'
-      - 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java'
-      - 'sources/org/workflowsim/planning/DAGParetoFLAPlanningAlgorithm.java'
   workflow_dispatch:
 
 permissions:

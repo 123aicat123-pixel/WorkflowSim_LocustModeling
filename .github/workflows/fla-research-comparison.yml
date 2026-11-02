@@ -1,8 +1,6 @@
 name: FLA four-algorithm simulated Pareto pilot
 
 on:
-  push:
-    branches: [fla-baseline]
   workflow_dispatch:
 
 permissions:
