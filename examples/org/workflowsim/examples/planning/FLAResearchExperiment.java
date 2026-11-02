@@ -80,6 +80,8 @@ public final class FLAResearchExperiment {
         if (args.length == 6) {
             if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens));
+            } else if ("fla-only".equals(args[5])) {
+                runs.add(runScalar(dax, seed, pop, gens));
             } else {
                 runs.add(runDag(dax, seed, pop, gens, args[5]));
             }
