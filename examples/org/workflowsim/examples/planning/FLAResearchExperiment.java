@@ -270,6 +270,7 @@ public final class FLAResearchExperiment {
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
         r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
+        appendAuditHistory(r,capture);
         return r;
     }
     private static Run runMleao(String dax,long seed,int pop,int gens) {
@@ -293,6 +294,7 @@ public final class FLAResearchExperiment {
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
         r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
+        appendAuditHistory(r,capture);
         return r;
     }
 
@@ -387,7 +389,7 @@ public final class FLAResearchExperiment {
             throws IOException {
         try(BufferedWriter w=Files.newBufferedWriter(
                 Paths.get(prefix+"_screening_summary.csv"),StandardCharsets.UTF_8)) {
-            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\\n");
+            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\n");
             for(Run r:runs) {
                 double pct=100.0*r.auditHvGain/Math.max(1e-12,r.simHv);
                 w.write(String.format(Locale.ROOT,
@@ -399,7 +401,7 @@ public final class FLAResearchExperiment {
         }
         try(BufferedWriter w=Files.newBufferedWriter(
                 Paths.get(prefix+"_screening_samples.csv"),StandardCharsets.UTF_8)) {
-            w.write("workflow,algorithm,seed,stratum,planned_makespan,planned_cost,sim_makespan,sim_cost,mapping\\n");
+            w.write("workflow,algorithm,seed,stratum,planned_makespan,planned_cost,sim_makespan,sim_cost,mapping\n");
             for(Run r:runs) {
                 for(int i=0;i<r.audited.size();i++) {
                     Candidate c=r.audited.get(i);
