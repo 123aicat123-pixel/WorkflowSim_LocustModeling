@@ -1,0 +1,79 @@
+name: WorkflowSim stage-in root-cause trace
+
+on:
+  push:
+    branches: [fla-baseline]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile all Java sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Trace actual per-job stage-in overhead for Montage and CyberShake
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.traceStageIn=true -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.DecoderFidelityCheck \
+            'Montage_25,CyberShake_30' '1' 'Output&Results/stagein_fidelity.csv' \
+            2>&1 | tee ci-logs/stagein.log
+          grep -q 'STAGEIN_TRACE' ci-logs/stagein.log
+      - name: Summarize measured overhead
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib, re, statistics, csv
+          log=pathlib.Path('ci-logs/stagein.log').read_text()
+          rows=[]
+          for line in log.splitlines():
+              if not line.startswith('STAGEIN_TRACE,'): continue
+              fields=dict(token.split('=',1) for token in line.split(',')[1:])
+              rows.append({k:float(v) for k,v in fields.items()})
+          assert len(rows)>50
+          with pathlib.Path('Output&Results/stagein_jobs.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=['job','vm','clock','compute','stagein','total'])
+              w.writeheader();w.writerows(rows)
+          positive=[r for r in rows if r['stagein']>1e-6]
+          summary=[
+              '# Measured stage-in cost in WorkflowSim',
+              '',
+              'This trace records actual values passed to CloudSim for each compute job. It changes no scheduling decisions.',
+              f'- Job observations across 2 workflows, four algorithm runs each: {len(rows)}',
+              f'- Nonzero stage-in observations: {len(positive)}',
+              f'- Maximum single-job stage-in: {max(r["stagein"] for r in rows):.6f} s',
+              f'- Total stage-in across all runs: {sum(r["stagein"] for r in rows):.6f} s',
+              f'- Median stage-in among positive jobs: {statistics.median(r["stagein"] for r in positive):.6f} s' if positive else '- No positive stage-in',
+              '',
+              'Individual observations are in stagein_jobs.csv; separate runs may use cached replicas and differing job submission orders.',
+          ]
+          pathlib.Path('Output&Results/stagein_report.md').write_text('\n'.join(summary)+'\n')
+          print('\n'.join(summary))
+          PY
+          cat 'Output&Results/stagein_report.md' >> "$GITHUB_STEP_SUMMARY"
+      - name: Save trace and raw data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagein-trace-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/stagein*
+          if-no-files-found: warn
+          retention-days: 30
