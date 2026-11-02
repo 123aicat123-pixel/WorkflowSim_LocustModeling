@@ -1,0 +1,128 @@
+name: Recalculate v2-global 30x100 results from immutable successful jobs
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v2global-aggregate-recovery.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+
+  pooled-simulator-hv:
+    name: Frozen 30x100 simulator-HV across 25 paired experiments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41504930248
+          github-token: ${{ github.token }}
+          pattern: v2confirmed-30x100-*-41504930248
+          path: inputs
+          merge-multiple: false
+      - name: Validate and aggregate common simulated HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,statistics,collections,math
+          candidatesFiles=list(pathlib.Path('inputs').rglob('confirm_*_replays.csv'))
+          metricsFiles=list(pathlib.Path('inputs').rglob('confirm_*_summary.csv'))
+          assert len(candidatesFiles)==25 and len(metricsFiles)==25,(len(candidatesFiles),len(metricsFiles))
+          algorithms=('FLA-3W','DAG-Pareto-FLA[v2-global]','NSGA-II','MLEAO')
+          grouped=collections.defaultdict(list);meta=collections.defaultdict(list)
+          for path in candidatesFiles:
+              with path.open(newline='') as f:arr=list(csv.DictReader(f))
+              assert arr
+              for r in arr:
+                  grouped[(r['workflow'],r['algorithm'],int(r['seed']))].append(
+                     (float(r['sim_makespan']),float(r['sim_cost'])))
+                  meta[(r['workflow'],r['algorithm'],int(r['seed']))].append(r)
+          workflows=sorted({k[0] for k in grouped})
+          assert len(workflows)==5 and len(grouped)==100
+          for wf in workflows:
+              for seed in range(1,6):
+                  assert {alg for w,alg,s in grouped if w==wf and s==seed}==set(algorithms)
+          refs={}
+          for wf in workflows:
+              allpts=[p for key,pts in grouped.items() if key[0]==wf for p in pts]
+              refs[wf]=(1.05*max(p[0] for p in allpts)+1,1.05*max(p[1] for p in allpts)+1)
+          def nondom(pts):
+              unique=sorted(set(pts))
+              return [p for p in unique if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in unique)]
+          def hv(pts,ref):
+              front=nondom(pts)
+              prev=ref[1];value=0.
+              for mk,cost in front:
+                  if cost<prev:
+                      value+=(ref[0]-mk)*(prev-cost)
+                      prev=cost
+              return value
+          values={(wf,alg,seed):hv(pts,refs[wf]) for (wf,alg,seed),pts in grouped.items()}
+          records=[]
+          for wf,alg,seed in sorted(values):
+              rows=meta[(wf,alg,seed)]
+              err_m=statistics.median(abs(float(r['planned_makespan'])-float(r['sim_makespan'])) /
+                    float(r['sim_makespan'])*100 for r in rows)
+              err_c=statistics.median(abs(float(r['planned_cost'])-float(r['sim_cost'])) /
+                    float(r['sim_cost'])*100 for r in rows)
+              records.append(dict(workflow=wf,algorithm=alg,seed=seed,sim_hv=values[(wf,alg,seed)],
+                                  reference_m=refs[wf][0],reference_c=refs[wf][1],
+                                  replayed=len(rows),median_abs_makespan_err_pct=err_m,
+                                  median_abs_cost_err_pct=err_c))
+          with pathlib.Path('reports/v2global_frozen_hv.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(records[0]))
+              w.writeheader();w.writerows(records)
+          out=[
+            '# V2-global stage-in-aware FLA comparative confirmation: 30x100, five seeds, five DAG families',
+            '',
+            'Actual WorkflowSim simulation, not planned surrogate, defines Hypervolume.',
+            'Each workflow has a single frozen reference across all algorithms and seeds.',
+            'All successful objective evaluations are passively captured; every distinct planned-nondominated assignment is replayed.',
+            'Simulated nondominated sets are then derived independently from those replayed assignments.',
+            'Each solver uses approximately 3000 candidate evaluations (exact count in per-run CSV); MLEAO is given extra generations to align EVALUATIONS; identical warm starts disabled.',
+            'Scalar FLA is a three-weight portfolio, adapted from MATLAB version 1.0, not a native multiobjective FLA.',
+            'DAG-FLA v2-global is a previously selected operator variant; full comparison tests, not assumes, superiority.',
+            'MLEAO is a disclosed reconstruction, not an exact source reproduction.',
+            'The simulated Pareto set may omit planning-dominated candidates; this is not exhaustive simulator search.',
+            '',
+            '| Workflow | Algorithm | Mean simulator HV | SD | Best seed wins / 5 | Median absolute sim Makespan err % |',
+            '|---|---|---:|---:|---:|---:|']
+          win=collections.Counter()
+          for wf in workflows:
+              for seed in range(1,6):
+                  best=max(values[(wf,alg,seed)] for alg in algorithms)
+                  for alg in algorithms:
+                      if abs(values[(wf,alg,seed)]-best)<1e-9:win[(wf,alg)]+=1
+              for alg in algorithms:
+                  rr=[r for r in records if r['workflow']==wf and r['algorithm']==alg]
+                  h=[r['sim_hv'] for r in rr]
+                  e=statistics.median(r['median_abs_makespan_err_pct'] for r in rr)
+                  out.append(f'| {wf} | {alg} | {statistics.mean(h):.4f} | {statistics.stdev(h):.4f} | {win[(wf,alg)]} | {e:.3f} |')
+          out+=['','## Paired percentage HV change versus FLA-3W (workflow-normalized)','']
+          for alg in algorithms[1:]:
+              per_family=[]
+              for wf in workflows:
+                  diffs=[100*(values[(wf,alg,seed)]/max(1e-9,values[(wf,'FLA-3W',seed)])-1)
+                         for seed in range(1,6)]
+                  out.append(f'- {wf} / {alg}: mean paired change {statistics.mean(diffs):+.3f}%, median {statistics.median(diffs):+.3f}%')
+                  per_family.extend(diffs)
+              out.append(f'- ALL 25 cases / {alg}: {statistics.mean(per_family):+.3f}% mean paired change')
+          out+=['','## Fixed HV reference points']
+          out.extend(f'- {wf}: ({refs[wf][0]:.6f}, {refs[wf][1]:.6f})' for wf in workflows)
+          pathlib.Path('reports/v2global_report.md').write_text('\n'.join(out)+'\n',encoding='utf-8')
+          print('\n'.join(out))
+          PY
+          cat reports/v2global_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Store results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v2confirmed-30x100-aggregate-recomputed-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 60

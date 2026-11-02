@@ -1,9 +1,6 @@
 name: FLA v2-global 30x100 full comparative confirmation
 
 on:
-  push:
-    branches: [fla-baseline]
-    paths: ['.github/workflows/fla-v2global-confirm.yml']
   workflow_dispatch:
 
 permissions:
@@ -104,8 +101,8 @@ jobs:
           mkdir -p reports
           python3 - <<'PY'
           import pathlib,csv,statistics,collections,math
-          candidatesFiles=list(pathlib.Path('inputs').rglob('paper_*_replays.csv'))
-          metricsFiles=list(pathlib.Path('inputs').rglob('paper_*_summary.csv'))
+          candidatesFiles=list(pathlib.Path('inputs').rglob('confirm_*_replays.csv'))
+          metricsFiles=list(pathlib.Path('inputs').rglob('confirm_*_summary.csv'))
           assert len(candidatesFiles)==25 and len(metricsFiles)==25,(len(candidatesFiles),len(metricsFiles))
           algorithms=('FLA-3W','DAG-Pareto-FLA[v2-global]','NSGA-II','MLEAO')
           grouped=collections.defaultdict(list);meta=collections.defaultdict(list)
