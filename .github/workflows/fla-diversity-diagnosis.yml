@@ -60,17 +60,16 @@ jobs:
             'Source: GitHub Actions 41507243548; five families, five paired seeds, 30x100 searches.',
             'All indicators below derive from captured objective evaluations and simulator replays.',
             'Number of visited assignments is DISTINCT, not merely archive size.',
-            'HV values are reference-dependent; cross-workflow HV magnitudes are not comparable.',
+            'Per-run HV uses a per-run reference and MUST NOT be compared across seeds; we deliberately omit it from this diversity-only report.',
             '',
-            '| Workflow | Algorithm | Mean distinct/evaluated % | Mean planned-ND/evaluated % | Mean replayed fronts | Mean simulated-ND points | Mean simulated HV |',
+            '| Workflow | Algorithm | Mean distinct/evaluated % | Mean planned-ND/evaluated % | Mean replayed fronts | Mean simulated-ND points | (HV intentionally omitted) |',
             '|---|---|---:|---:|---:|---:|---:|']
           def mean(x,k):return statistics.mean(float(r[k]) for r in x)
           ag=collections.defaultdict(list)
           for (wf,alg),g in sorted(groups.items()):
               d=statistics.mean(100*int(r['distinct_observed'])/int(r['captured_evaluations']) for r in g)
               nd=statistics.mean(100*int(r['replayed'])/int(r['captured_evaluations']) for r in g)
-              h=mean(g,'sim_hv')
-              out.append(f'| {wf} | {alg} | {d:.2f} | {nd:.2f} | {mean(g,"replayed"):.1f} | {mean(g,"sim_nondominated"):.1f} | {h:.3f} |')
+              out.append(f'| {wf} | {alg} | {d:.2f} | {nd:.2f} | {mean(g,"replayed"):.1f} | {mean(g,"sim_nondominated"):.1f} | — |')
               ag[alg]+=g
           out+=['','## Aggregate diversity across all 25 paired cases','',
                 '| Algorithm | Mean unique schedules / evaluations % | Mean planned ND schedules | Mean simulator ND schedules |',
