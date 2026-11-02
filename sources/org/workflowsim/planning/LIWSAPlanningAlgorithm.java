@@ -126,6 +126,11 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static class LastRunMetrics {
         public double chosenMakespan;
         public double chosenCost;
+        public double stageInAwareMakespan;
+        public double stageInAwareCost;
+        public double stageInAwareTotalSeconds;
+        public double stageInAwareExternalSeconds;
+        public double stageInAwareIntermediateSeconds;
         public int paretoFrontSize;
         /** Each element is {makespan, cost} for one member of the final Pareto front. */
         public List<double[]> paretoFrontPoints;
@@ -343,6 +348,16 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
         metrics.generationCountUsed = generationCount;
         metrics.objectiveEvaluations = evaluationCount;
         metrics.seedPlanningPoints = seedPlanningPoints;
+        // Independent, read-only post-hoc estimate for this same committed
+        // assignment. The search, its objective values, and archive are unchanged.
+        StageInAwareScheduleEvaluator.Result stageInPrediction =
+                new StageInAwareScheduleEvaluator(taskOrder, vmList)
+                .evaluate(toAssignment(commitGenotype));
+        metrics.stageInAwareMakespan = stageInPrediction.makespan;
+        metrics.stageInAwareCost = stageInPrediction.cost;
+        metrics.stageInAwareTotalSeconds = stageInPrediction.stageInSeconds;
+        metrics.stageInAwareExternalSeconds = stageInPrediction.externalStageInSeconds;
+        metrics.stageInAwareIntermediateSeconds = stageInPrediction.intermediateStageInSeconds;
         lastRun = metrics;
 
         commitAssignment(commitGenotype);
