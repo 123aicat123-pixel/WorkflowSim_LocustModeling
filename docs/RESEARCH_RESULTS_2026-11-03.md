@@ -137,3 +137,79 @@ java -Dworkflowsim.planningStageInAware=true \
 ```
 
 以上命令生成 `_summary.csv`、`_replays.csv`、`_limitations.txt`。跨 5 种子 HV 汇总应使用同一工作流固定 reference point 的 Actions 汇总流程，而非直接比较单次默认 HV。建议提交论文时单独在仓库里发布不可变 Git tag、来源代码归档与完整外部实验数据，不仅依赖会过期的 Actions artifacts。
+
+## 8. v3/v4 算子消融：保留有效机制，舍弃无效机制
+
+### 8.1 v3 开发集（预先选择候选）
+
+[GitHub v3 9 组开发集消融](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41506636358)。三类工作流各三个 paired seeds，种群 30 / 代数 100 / 每算法 3030 次目标函数评价，真实 WorkflowSim 回放后计算每个工作流的固定参考点 HV。
+
+| Mechanism | Mean paired simulated HV change vs v2-global | Positive cases |
+|---|---:|---:|
+| Resource-aware VM mutation | +4.643% | 8/9 |
+| Pareto-archive block recombination | **+5.661%** | 6/9 |
+| Both combined | +3.965% | 7/9 |
+
+根据事前记录的**开发集平均相对 HV 增益**选择 v3-archive 进入保留集。不能以同一组数据选择模型又声称独立验证。
+
+### 8.2 预留两类工作流的独立验证
+
+[Epigenomics + Inspiral 10 组成功的 v3 held-out run](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41507118883)。
+
+- Epigenomics_24：相比 v2-global +0.903% 平均 paired HV，3/5 种子更好。
+- Inspiral_30：相比 v2-global +4.142% 平均 paired HV，3/5 种子更好。
+- 10 个保留集配对总体 +2.522%，6/10 更好，**不足以单独支持显著性声明**。
+
+### 8.3 与现有算法的直接对照
+
+[完整 5×5×4 种算法的 30×100 真实仿真对照](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41507243548)。
+
+| v3-archive 对照对象 | 25 组 mean paired HV difference | v3 胜出 |
+|---|---:|---:|
+| NSGA-II | **−3.146%** | 3/25 |
+| Scalar FLA-3W | +0.178% | 10/25 |
+| MLEAO reconstructed | +2.813% | 14/25 |
+
+**结论：v3 只证明相对自己的旧版有改进，仍未证明优于标准 NSGA-II。**
+
+### 8.4 拒绝无效的 v4
+
+[新增 NSGA-II 式 Pareto 拥挤距离环境选择的独立消融](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41508089777)：v4-crowding 相比 v3-archive 在 9 组开发集平均 paired HV **−3.803%**；与资源感知变异组合后 **−1.823%**。两种变体都未入选，保留在研究分支上供复现，不把失败结果隐藏。
+
+## 9. 关键因果问题：改变评价模型是否真的改变优化质量？
+
+[25 组真实仿真 NSGA-II 旧版 vs stage-in-aware 评价模型](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41509031050)。
+
+**配对控制：** 两组均为同一份 NSGA-II 代码、30 population、100 generations、3030 次目标调用、相同 seed、DAX、VM 池、实际 WorkflowSim 引擎、最终候选模拟回放和同一工作流下冻结 HV reference；唯一实验开关是 `-Dworkflowsim.planningStageInAware=false/true`。算法搜索路径本身会因评价目标不同而变化，这是实验希望测量的因果效应。为公平，两种结果均仅回放所有独特的**规划非支配**候选；不能声称是完整 simulator Pareto front。
+
+| DAG | Mean HV old model | Mean HV stage-in-aware | Mean paired % change | Positive seeds |
+|---|---:|---:|---:|---:|
+| CyberShake_30 | 40830.8492 | 203194.8401 | **+398.813%** | 5/5 |
+| Epigenomics_24 | 1806620.2430 | 2554541.9364 | **+47.083%** | 4/5 |
+| Inspiral_30 | 99435.2345 | 108974.2416 | +17.357% | 3/5 |
+| Montage_25 | 363.6455 | 372.7709 | +2.510% | 5/5 |
+| Sipht_30 | 16523.5311 | 16872.7746 | +2.132% | 4/5 |
+
+**25 组配对中 21/25 真实仿真 HV 改善。** +398.813% 是该条件下的相对 HV 百分比，不代表 Makespan 降低 398% 或所有数据集都有该幅度。跨五种工作流的百分比均值受 CyberShake 异常大的比率强烈影响，**不能代替按工作流报告的效应**。
+
+### 新的、更可靠的研究假设
+
+1. **WorkflowSim stage-in 数据输入时间的错配**比简单的搜索算子微调更可能造成重大性能损失；原任务耗时与输入传输的系统性偏差可通过真实事件追踪、编译回归和固定分配重放验证。
+2. 统一、成本一致且具有 replica-cache 意识的通信与执行评价模型，可以让**同一个优化器**获得更好的真正仿真解集，而不是仅改善估计数值。对 NSGA-II 现有数据支持此假设，需要跨另外的优化器和大规模 DAG 再验。
+3. 若要发表多目标优化算法论文，仍应在公平、stage-in-aware 模型之上设计并严谨验证新的 FLA/DAG 机制；目前不能宣称 v2/v3/v4 性能超越 NSGA-II。
+
+### 下一步科研验收门槛
+
+- 至少另一类优化器复核评价模型开关的因果效应；模型误差与算法性能结论独立统计。
+- 大规模 DAG、异构 VM / 通信瓶颈 / 不同价格环境与 20–30+ 随机种子；报告 HV/IGD、Makespan/Cost、运行时间、数据传输统计、置信区间。
+- 清楚区分连续原始 FLA 与离散任务到 VM 的研究适配，记录真实 function evaluations 和模拟器回放预算；不能用一个成功 CI 代替科研结论。
+- 对 GitHub fork 与 Windows 本地代码做文件级 SHA-256 对账才能说“两者完全一致”。
+
+## 10. 本轮新增可复现实验入口
+
+- [v3 archive 确认实验 CI](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/fla-v3archive-confirm.yml)
+- [NSGA-II 旧模型 vs Stage-in-aware 真实调度对照](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/stagein-search-impact.yml)
+- [v3 预留集评估](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/dag-fla-v3-holdout.yml)
+- [v4 负结果消融](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/dag-fla-v4-pilot.yml)
+
+本报告中的定量结果均来自明确列出的 GitHub Actions run；没有将相互不同的 reference point 下的 HV 绝对值混用。GitHub Actions artifacts 会过期，因此关键汇总及对应链接保存在此 Git 跟踪文档，原始候选与日志目前仍可在相应 Actions 产物下载。
