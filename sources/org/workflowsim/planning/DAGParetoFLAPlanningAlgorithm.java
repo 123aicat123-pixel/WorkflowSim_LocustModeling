@@ -46,6 +46,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_ARCHIVE_RECOMBINATION = false;
     /** v4 alternative: strict non-dominated rank + crowding environmental selection. */
     public static boolean CONFIG_PARETO_CROWDING_SELECTION = false;
+    /** v5 ablations; disabled unless the experiment selects them. */
+    public static boolean CONFIG_ARCHIVE_DAG_BLOCK = false;
+    public static boolean CONFIG_ARCHIVE_PREFERENCE_DONOR = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -107,6 +110,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useDag, useCross, useArchiveSso, useAdaptiveMutation, useAdaptivePreference;
     private final boolean useGlobalSelection, useImmigrants;
     private final boolean useResourceAwareMutation, useArchiveRecombination, useParetoCrowdingSelection;
+    private final boolean useArchiveDagBlock, usePreferenceDonor;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -139,6 +143,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useResourceAwareMutation = CONFIG_RESOURCE_AWARE_MUTATION;
         useArchiveRecombination = CONFIG_ARCHIVE_RECOMBINATION;
         useParetoCrowdingSelection = CONFIG_PARETO_CROWDING_SELECTION;
+        useArchiveDagBlock = CONFIG_ARCHIVE_DAG_BLOCK;
+        usePreferenceDonor = CONFIG_ARCHIVE_PREFERENCE_DONOR;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -231,7 +237,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     }
                     if (useArchiveRecombination && !archive.isEmpty()
                             && random.nextDouble() < 0.25) {
-                        archiveRecombine(genes);
+                        archiveRecombine(genes, isG1);
                     }
                     if (useResourceAwareMutation && random.nextDouble() < 0.45) {
                         resourceAwareMutation(genes, isG1);
@@ -532,14 +538,51 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 : (r < 0.95 || third < 0) ? second : third;
     }
 
-    /** A short, contiguous block of VM decisions is copied from one
-     * nondominated archived solution, promoting building-block exchange. */
-    private void archiveRecombine(int[] genes) {
-        Solution guide = archive.get(random.nextInt(archive.size()));
-        int length = Math.min(n, 1 + random.nextInt(Math.max(1, n / 5)));
-        int start = random.nextInt(n - length + 1);
-        for (int k = start; k < start + length; k++) {
-            genes[k] = guide.genes[k];
+    /**
+     * v3: copy a random contiguous block from one archive member.
+     * v5: copy a genuine dependency-connected neighborhood instead.
+     * The offspring evaluation count is identical for all variants.
+     */
+    private void archiveRecombine(int[] genes, boolean groupOne) {
+        Solution guide = usePreferenceDonor
+                ? chooseArchiveLeader(groupOne ? alpha1 : 1.0 - alpha1)
+                : archive.get(random.nextInt(archive.size()));
+        if (!useArchiveDagBlock) {
+            int length = Math.min(n, 1 + random.nextInt(Math.max(1, n / 5)));
+            int start = random.nextInt(n - length + 1);
+            for (int k = start; k < start + length; k++) genes[k] = guide.genes[k];
+            return;
+        }
+        double total = 0.0;
+        for (int k = 0; k < n; k++) total += Math.max(EPS, importance[k]);
+        double target = random.nextDouble() * total;
+        int focal = n - 1;
+        for (int k = 0; k < n; k++) {
+            target -= Math.max(EPS, importance[k]);
+            if (target <= 0) { focal = k; break; }
+        }
+        Map<Task,Integer> indices = new IdentityHashMap<>();
+        for (int k = 0; k < n; k++) indices.put(taskOrder.get(k),k);
+        genes[focal] = guide.genes[focal];
+        int copied = 1;
+        for (Task parent : taskOrder.get(focal).getParentList()) {
+            Integer i = indices.get(parent);
+            if (i != null && random.nextDouble() < 0.70) {
+                genes[i] = guide.genes[i];
+                copied++;
+            }
+        }
+        for (Task child : taskOrder.get(focal).getChildList()) {
+            Integer i = indices.get(child);
+            if (i != null && random.nextDouble() < 0.50) {
+                genes[i] = guide.genes[i];
+                copied++;
+            }
+        }
+        if (copied == 1 && n > 1) {
+            int other = random.nextInt(n - 1);
+            if (other >= focal) other++;
+            genes[other] = guide.genes[other];
         }
     }
 
