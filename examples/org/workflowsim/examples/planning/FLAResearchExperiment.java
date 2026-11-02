@@ -78,7 +78,11 @@ public final class FLAResearchExperiment {
         List<Run> runs = new ArrayList<>();
         final int cap = pop * (gens + 1) + 3 * pop + 6;
         if (args.length == 6) {
-            runs.add(runDag(dax, seed, pop, gens, args[5]));
+            if ("nsga-only".equals(args[5])) {
+                runs.add(runNsga(dax, seed, pop, gens));
+            } else {
+                runs.add(runDag(dax, seed, pop, gens, args[5]));
+            }
         } else {
             runs.add(runScalar(dax, seed, pop, gens));
             runs.add(runDag(dax, seed, pop, gens,
