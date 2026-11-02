@@ -72,6 +72,23 @@ A dedicated out-of-sample scalability run used five larger workflow instances, t
 
 These data corroborate FLA/ML-based baseline improvements at larger task counts but still show **no overall superiority to NSGA-II**. Inspiral_50 favored NSGA-II by ~2.54%; Montage_50 favored v6 by ~3.09% in paired relative HV. [Larger-DAG replay and frozen HV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41511726130).
 
+## Additional 100-task scaling probe
+
+We also evaluated **five 100-task DAG instances** (CyberShake_100, Epigenomics_100, Inspiral_100, Montage_100, Sipht_100), with two paired seeds per instance. This is deliberately described as a scalability **probe** because two seeds are insufficient for meaningful statistical confidence.
+
+| V6 compared with | Mean within-DAG paired simulated-HV change across 10 cases | V6 wins |
+|---|---:|---:|
+| NSGA-II | **+0.186%** | 5/10 |
+| FLA-3W | **−1.500%** | 6/10 |
+| reconstructed MLEAO | **+35.491%** | 9/10 |
+
+- CyberShake_100 favored v6 over NSGA-II (+2.228% mean paired HV).
+- Sipht_100 favored NSGA-II (v6 −5.857%).
+- Montage_100 favored FLA-3W over v6 (v6 −21.167%), an explicit counterexample to any across-all-sizes FLA superiority claim.
+- Workload structure has a pronounced effect; larger-instance results must not be pooled carelessly with 25/50-task benchmarks without matched family-level stratification.
+
+[100-task simulator replay and frozen HV evidence](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41512322414).
+
 ## Search efficiency and end-to-end deliverable
 
 From the same 25 matched 30x100 runs:
@@ -111,9 +128,9 @@ The output contains a summary CSV, a full set of simulator-replayed candidate as
 1. NSGA-II is currently **statistically unresolved** relative to v6; do not describe v6 as consistently superior.
 2. The original continuous FLA source/parameter fidelity still requires independently verifiable equation-to-code documentation. It is not scientifically sound to call the discrete FLA implementation a faithful original baseline.
 3. The MLEAO baseline is a reconstruction, not a source-faithful implementation. Do not advertise it otherwise.
-4. Expand to more DAG sizes, pricing regimes, VM heterogeneity, and independent workload families. Preserve development/held-out distinction after tuning.
+4. We have tested 25–30, 46–60, and 100 task scales, but the largest scale has only 2 seeds per DAG. Expand independent seeds, pricing regimes, VM heterogeneity, and workload families. Preserve development/held-out distinction after tuning.
 5. Add a pre-registered reference point, IGD+ or epsilon indicator when justified, cost/makespan front visualization, runtime overhead, and stronger statistical power (more independent seeds/workloads).
 6. Candidate screening by planned nondominance may lose assignments that become non-dominated **after** simulation; quantify this approximation or replay every distinct candidate on selected small tests.
 7. This repository branch is not verified byte-for-byte identical to the user's local Windows source tree.
 
-**Conservative current claim:** V6 novelty repair improves FLA search efficiency and achieves positive simulated-HV gains against FLA-3W and reconstructed MLEAO on tested workloads; it is broadly competitive with NSGA-II, but cannot claim superiority. No journal acceptance/publishability is guaranteed.
+**Conservative current claim:** V6 novelty repair improves FLA search efficiency. It achieves positive simulated-HV gains against FLA-3W on 25–60 task workloads and is broadly competitive with NSGA-II at 25–100 tasks, but cannot claim superiority. At 100 tasks it loses to FLA-3W on some families; reconstructed MLEAO is an imperfect baseline. No journal acceptance/publishability is guaranteed.
