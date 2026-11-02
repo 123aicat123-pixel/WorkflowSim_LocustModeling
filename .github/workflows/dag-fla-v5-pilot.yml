@@ -1,0 +1,150 @@
+name: DAG-FLA v5 graph-connected archive transfer development pilot
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/dag-fla-v5-pilot.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  v2-pilot:
+    name: V5 pilot ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Sipht_30]
+        seed: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile all sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/commit-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/files.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/files.txt 2>&1 | tee ci-logs/compile.log
+      - name: Four controlled v5 variants, 3030 evaluations each
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in v3-archive v5-dagblock v5-donor v5-both; do
+            java -Dworkflowsim.planningStageInAware=true -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+              "Output&Results/v5_${{ matrix.workflow }}_s${{ matrix.seed }}_${variant}" "${variant}" \
+              2>&1 | tee "ci-logs/${variant}.log"
+          done
+      - name: Validate evaluated and replayed candidate counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,csv,math
+          ps=list(pathlib.Path('Output&Results').glob('v5_${{ matrix.workflow }}_s${{ matrix.seed }}_*_summary.csv'))
+          qs=list(pathlib.Path('Output&Results').glob('v5_${{ matrix.workflow }}_s${{ matrix.seed }}_*_replays.csv'))
+          assert len(ps)==len(qs)==4,(len(ps),len(qs))
+          for p in ps:
+              with p.open(newline='') as f:rows=list(csv.DictReader(f))
+              assert len(rows)==1
+              r=rows[0]
+              assert int(r['evaluations'])==int(r['captured_evaluations'])==3030, (p.name,r['evaluations'])
+              assert int(r['replayed'])>0
+          print('PASS four 30x100 paired v5 FLA search ablations')
+          PY
+      - name: Upload full Pareto candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dagv5-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/v5_*_replays.csv
+            Output&Results/v5_*_summary.csv
+          if-no-files-found: warn
+          retention-days: 45
+
+  report:
+    name: Frozen HV of four v5 variants, 3 development workflows
+    needs: [v2-pilot]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dagv5-*-${{ github.run_id }}
+          path: inputs
+          merge-multiple: false
+      - name: Recalculate HV with one reference across all variants/seeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,pathlib,collections,statistics
+          files=list(pathlib.Path('inputs').rglob('*_replays.csv'))
+          assert len(files)==36,len(files)
+          grouped=collections.defaultdict(list)
+          for p in files:
+              with p.open(newline='') as f: rows=list(csv.DictReader(f))
+              assert rows
+              for r in rows:
+                  grouped[(r['workflow'],r['algorithm'],int(r['seed']))].append(
+                       (float(r['sim_makespan']),float(r['sim_cost'])))
+          algs=['DAG-Pareto-FLA[v3-archive]','DAG-Pareto-FLA[v5-dagblock]',
+                'DAG-Pareto-FLA[v5-donor]','DAG-Pareto-FLA[v5-both]']
+          workflows=sorted({x[0] for x in grouped})
+          assert len(grouped)==36 and len(workflows)==3
+          refs={}
+          for wf in workflows:
+              vals=[p for (w,_,_),arr in grouped.items() if w==wf for p in arr]
+              refs[wf]=(max(x for x,_ in vals)*1.05+1,max(y for _,y in vals)*1.05+1)
+          def nd(arr):
+              u=sorted(set(arr))
+              return [x for x in u if not any(q!=x and q[0]<=x[0] and q[1]<=x[1] for q in u)]
+          def hv(arr,ref):
+              val=0;prev=ref[1]
+              for m,c in nd(arr):
+                  if c<prev:val+=(ref[0]-m)*(prev-c);prev=c
+              return val
+          h={(wf,alg,seed):hv(arr,refs[wf]) for (wf,alg,seed),arr in grouped.items()}
+          report=['# Stage-in-aware DAG-FLA v5 DAG-connected archive neighborhood experiment',
+                  '',
+                  'Population 30, 100 generations, 3 development workflows, 3 paired seeds; each variant 3030 objective evaluations.',
+                  'Three v5 archive block variants versus v3-archive control: DAG-connected transfer, preference-ranked donor, and both.',
+                  'Hypervolume is always recomputed from actual simulator replays under one workflow reference.',
+                  'Planning-nondominated replay is not an exhaustive simulator Pareto front.',
+                  '',
+                  '| Workflow | Variant | Mean simulated HV | Mean paired change vs v3-archive |',
+                  '|---|---|---:|---:|']
+          for wf in workflows:
+              for a in algs:
+                  v=[h[(wf,a,s)] for s in range(1,4)]
+                  ch=[100*(h[(wf,a,s)]/max(1e-12,h[(wf,algs[0],s)])-1) for s in range(1,4)]
+                  report.append(f'| {wf} | {a} | {statistics.mean(v):.4f} | {statistics.mean(ch):+.3f}% |')
+          report+=['','## Pooled paired differences (9 development cases)']
+          for a in algs[1:]:
+              ch=[100*(h[(wf,a,s)]/max(1e-12,h[(wf,algs[0],s)])-1)
+                  for wf in workflows for s in range(1,4)]
+              report.append(f'- {a}: {statistics.mean(ch):+.3f}% mean change; {sum(z>0 for z in ch)}/9 better cases')
+          pathlib.Path('reports/dag_v5_report.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/dag_v5_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dag-v5-summary-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 45
