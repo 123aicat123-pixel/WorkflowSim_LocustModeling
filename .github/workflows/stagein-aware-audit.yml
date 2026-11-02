@@ -1,0 +1,133 @@
+name: Stage-in-aware estimator independent fidelity audit
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/stagein-aware-audit.yml'
+      - 'sources/org/workflowsim/planning/StageInAwareScheduleEvaluator.java'
+      - 'examples/org/workflowsim/examples/planning/StageInAwareFidelityAudit.java'
+      - 'sources/org/workflowsim/planning/LIWSAPlanningAlgorithm.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paired-fidelity:
+    name: Stage-in estimator ${{ matrix.workflow }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, Sipht_30, CyberShake_30, CyberShake_50, CyberShake_100, Epigenomics_24, Inspiral_30]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile all Java
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/commit.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/source-files.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/source-files.txt 2>&1 | tee ci-logs/compile.log
+      - name: Five-seed paired estimator-versus-simulator comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.StageInAwareFidelityAudit \
+            '${{ matrix.workflow }}' '1,2,3,4,5' \
+            'Output&Results/stagein_audit_${{ matrix.workflow }}.csv' \
+            2>&1 | tee ci-logs/stagein_audit.log
+          python3 - <<'PY'
+          import csv,math
+          p='Output&Results/stagein_audit_${{ matrix.workflow }}.csv'
+          with open(p,newline='') as f: rows=list(csv.DictReader(f))
+          assert len(rows)==5 and {int(r['seed']) for r in rows}==set(range(1,6))
+          for r in rows:
+              for k in ('baseline_plan_makespan','stagein_plan_makespan','sim_makespan',
+                         'baseline_plan_cost','stagein_plan_cost','sim_cost',
+                         'estimated_stagein_seconds','baseline_makespan_abs_pct','stagein_makespan_abs_pct',
+                         'baseline_cost_abs_pct','stagein_cost_abs_pct'):
+                  assert math.isfinite(float(r[k])) and float(r[k])>=0,(k,r[k])
+          print('VALIDATION PASS',p)
+          PY
+      - name: Upload raw five-seed comparisons
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagein-estimator-${{ matrix.workflow }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/stagein_audit_${{ matrix.workflow }}.csv
+          if-no-files-found: warn
+          retention-days: 30
+
+  summarize:
+    name: Seven-workflow paired fidelity analysis
+    needs: [paired-fidelity]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stagein-estimator-*-${{ github.run_id }}
+          path: input
+          merge-multiple: false
+      - name: Check all 35 observations and generate report
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,statistics,pathlib,collections
+          paths=list(pathlib.Path('input').rglob('stagein_audit_*.csv'))
+          assert len(paths)==7, f'Expected 7 independent CSVs; found {len(paths)}'
+          data=[]
+          for p in paths:
+              with p.open(newline='') as f: data.extend(csv.DictReader(f))
+          assert len(data)==35
+          expected={'Montage_25','Sipht_30','CyberShake_30','CyberShake_50',
+                    'CyberShake_100','Epigenomics_24','Inspiral_30'}
+          assert {r['workflow'] for r in data}==expected
+          report=[
+            '# Stage-in-aware post-hoc planning estimator — paired WorkflowSim results',
+            '',
+            'This is a read-only estimator: NO optimization decisions or simulator code were altered.',
+            'Its approximation includes stage-in as occupied VM time and the VM compute bill.',
+            'It is not an exact replica-cache and event-driven dispatcher model; compare numerical errors.',
+            'Error = 100 * abs(predicted - simulator) / simulator.',
+            '',
+            '| Workflow | Baseline makespan median % | Stage-in-aware makespan median % | Baseline cost median % | Stage-in-aware cost median % |',
+            '|---|---:|---:|---:|---:|',
+          ]
+          for wf in sorted(expected):
+              rr=[r for r in data if r['workflow']==wf]
+              assert len(rr)==5 and {int(r['seed']) for r in rr}==set(range(1,6))
+              med=lambda key:statistics.median(float(x[key]) for x in rr)
+              report.append(f'| {wf} | {med("baseline_makespan_abs_pct"):.3f} | {med("stagein_makespan_abs_pct"):.3f} | {med("baseline_cost_abs_pct"):.3f} | {med("stagein_cost_abs_pct"):.3f} |')
+          improvements=sum(float(r['stagein_makespan_abs_pct'])<float(r['baseline_makespan_abs_pct']) for r in data)
+          cost_improvements=sum(float(r['stagein_cost_abs_pct'])<float(r['baseline_cost_abs_pct']) for r in data)
+          report += ['',f'- Makespan absolute error improved on {improvements} / 35 schedules',
+                       f'- Cost absolute error improved on {cost_improvements} / 35 schedules',
+                       '', 'A win in estimator fidelity is NOT an algorithm improvement.']
+          pathlib.Path('reports/stagein_paired_report.md').write_text('\n'.join(report)+'\n')
+          with pathlib.Path('reports/stagein_paired_raw.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(data[0]))
+              w.writeheader();w.writerows(sorted(data,key=lambda x:(x['workflow'],int(x['seed']))))
+          print('\n'.join(report))
+          PY
+          cat reports/stagein_paired_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload consolidated paired analysis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stagein-fidelity-report-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
