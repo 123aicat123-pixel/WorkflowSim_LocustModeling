@@ -189,3 +189,21 @@ Sipht_30 showed larger effects: mean extra HV **+0.310912%** (v6-pop) and **+0.2
 **Recorder correction:** `UnifiedCandidateRecorder.Capture.uniqueEvents()` now exposes each independent solver run's unique evaluated assignments for read-only audits. The FLA-3W summary's distinct-assignment count is deduplicated **across all three scalar weight runs**; earlier historical reports calculated the sum of per-weight distinct counts, which can overstate global distinctness if the same task assignment occurs under different weights. The previous reported 60.225% figure should therefore be labeled a historical, non-union count pending rerun, not a rigorously measured across-weight novelty rate.
 
 All screening-audit switches are disabled by default, so they do not silently alter the original experiment results.
+
+## Frozen simulated-HV reference sensitivity (100-task, all five seeds)
+
+The 100-task solver comparison was independently recomputed using **the same immutable WorkflowSim replay candidates** from the two five-seed source-consistent cohorts, but five distinct **common** reference multipliers. Every alternative remains shared across all four algorithms and all five seeds within the same workflow.
+
+| Multiplier of each workflow's worst observed makespan and cost (+1) | v6 relative to NSGA-II (25-case mean) | v6 relative to FLA-3W (25-case mean) | Winner changes vs multiplier 1.05 |
+|---|---:|---:|---:|
+| 1.02 | −0.205% | −4.085% | 1/25 |
+| 1.05 (original report) | −0.433% | −2.877% | 0/25 |
+| 1.10 | −0.617% | −1.730% | 1/25 |
+| 1.20 | −0.727% | −0.694% | 3/25 |
+| 1.50 | −0.672% | +0.082% | 4/25 |
+
+**Interpretation:** v6 has no demonstrated overall advantage over NSGA-II across these tested references. The *sign* of the small v6–FLA-3W difference changes under the loosest reference, so an isolated percentage with an undisclosed reference point would be misleading. Across the candidate-based benchmark, four per-seed top-algorithm winners also change at the 1.50 reference. These alternatives are an explicitly **post hoc sensitivity check**, not evidence that the reference point was preregistered.
+
+[Five-reference-point robustness check and full per-seed CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41519102169).
+
+Both filtering bias and reference-point sensitivity should be addressed before claiming statistically robust algorithm superiority.
