@@ -53,8 +53,8 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import pathlib,csv,math
-          ps=list(pathlib.Path('Output&Results').glob('*_summary.csv'))
-          qs=list(pathlib.Path('Output&Results').glob('*_replays.csv'))
+          ps=list(pathlib.Path('Output&Results').glob('v2_${{ matrix.workflow }}_s${{ matrix.seed }}_*_summary.csv'))
+          qs=list(pathlib.Path('Output&Results').glob('v2_${{ matrix.workflow }}_s${{ matrix.seed }}_*_replays.csv'))
           assert len(ps)==len(qs)==4,(len(ps),len(qs))
           for p in ps:
               with p.open(newline='') as f:rows=list(csv.DictReader(f))
