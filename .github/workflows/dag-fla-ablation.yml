@@ -1,0 +1,169 @@
+name: DAG-Pareto-FLA controlled operator ablation
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/dag-fla-ablation.yml'
+      - 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java'
+      - 'sources/org/workflowsim/planning/DAGParetoFLAPlanningAlgorithm.java'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dag-operator-ablation:
+    name: Ablation ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Sipht_30, Epigenomics_24, Inspiral_30]
+        seed: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile Java code once for all ablations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/commit.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Run full design, each single-module removal, and minimal variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in all no-dag no-cross no-archive-sso no-adaptive-mutation no-adaptive-preference minimal; do
+            echo "START ${{ matrix.workflow }} seed=${{ matrix.seed }} variant=${variant}"
+            java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 12 12 \
+              "Output&Results/ab_${{ matrix.workflow }}_s${{ matrix.seed }}_${variant}" "${variant}" \
+              2>&1 | tee "ci-logs/${variant}.log"
+          done
+      - name: Verify all seven ablation results and independent decoder consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math
+          root=pathlib.Path('Output&Results')
+          summaries=list(root.glob('ab_*_summary.csv'))
+          replays=list(root.glob('ab_*_replays.csv'))
+          assert len(summaries)==7 and len(replays)==7,(len(summaries),len(replays))
+          for s in summaries:
+              with s.open(newline='') as f: rows=list(csv.DictReader(f))
+              assert len(rows)==1
+              a=rows[0]
+              assert int(a['evaluations'])<=int(a['budget_cap']) and int(a['evaluations'])>0
+              assert int(a['replayed'])>=1
+              assert math.isfinite(float(a['sim_hv'])) and float(a['sim_hv'])>=0
+          print('PASS: 7 variants, exact assignment replays, valid objectives, within budget')
+          PY
+      - name: Upload all variant candidates and observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-dag-ablation-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/ab_*_summary.csv
+            Output&Results/ab_*_replays.csv
+          if-no-files-found: warn
+          retention-days: 30
+
+  analyze:
+    name: Frozen simulated HV and paired ablation analysis
+    needs: [dag-operator-ablation]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fla-dag-ablation-*-${{ github.run_id }}
+          path: inputs
+          merge-multiple: false
+      - name: Group all 175 runs, score frozen simulation HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,collections,statistics,math
+          root=pathlib.Path('inputs')
+          filenames=list(root.rglob('*_replays.csv'))
+          assert len(filenames)==175, f'Expected 175 ablation candidate files, found {len(filenames)}'
+          groups=collections.defaultdict(list)
+          for path in filenames:
+              with path.open(newline='') as f: data=list(csv.DictReader(f))
+              assert data
+              for r in data:
+                  groups[(r['workflow'],r['algorithm'],int(r['seed']))].append(
+                      (float(r['sim_makespan']),float(r['sim_cost'])))
+          variants=['DAG-Pareto-FLA','DAG-Pareto-FLA[no-dag]','DAG-Pareto-FLA[no-cross]',
+                    'DAG-Pareto-FLA[no-archive-sso]','DAG-Pareto-FLA[no-adaptive-mutation]',
+                    'DAG-Pareto-FLA[no-adaptive-preference]','DAG-Pareto-FLA[minimal]']
+          workflows=sorted({k[0] for k in groups})
+          assert len(groups)==175 and len(workflows)==5
+          refs={}
+          for wf in workflows:
+              pts=[p for (name,_,_),arr in groups.items() if name==wf for p in arr]
+              refs[wf]=(max(x for x,_ in pts)*1.05+1,max(y for _,y in pts)*1.05+1)
+          def nondom(points):
+              u=sorted(set(points))
+              return [p for p in u if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in u)]
+          def hv(points,ref):
+              total=0.;prev=ref[1]
+              for m,c in nondom(points):
+                  if c<prev:total+=(ref[0]-m)*(prev-c);prev=c
+              return total
+          values={}
+          for wf in workflows:
+              for seed in range(1,6):
+                  assert {(k[1]) for k in groups if k[0]==wf and k[2]==seed}==set(variants)
+                  for variant in variants:
+                      values[(wf,variant,seed)]=hv(groups[(wf,variant,seed)],refs[wf])
+          with pathlib.Path('reports/ablation_frozen_hv.csv').open('w',newline='') as f:
+              writer=csv.writer(f);writer.writerow(['workflow','variant','seed','sim_hv','reference_m','reference_c'])
+              for (wf,v,seed),h in sorted(values.items()):
+                  writer.writerow([wf,v,seed,f'{h:.9f}',f'{refs[wf][0]:.9f}',f'{refs[wf][1]:.9f}'])
+          report=['# Controlled DAG-Pareto-FLA single-module ablation',
+                  '',
+                  'Five workflows, five paired seeds, population 12 and generation budget 12. All candidate fronts replayed through WorkflowSim.',
+                  'One frozen simulator-HV reference per workflow across ALL variants and seeds.',
+                  'Training/screening families: Montage, CyberShake and Sipht. Holdout families: Epigenomics and Inspiral.',
+                  'Only PLANNED nondominated archives are replayed, not every visited schedule; this limits conclusions.',
+                  '',
+                  '| Workflow | Variant | Mean HV | Wins / 5 | Mean paired % versus full |',
+                  '|---|---|---:|---:|---:|']
+          for wf in workflows:
+              for v in variants:
+                  vals=[values[(wf,v,s)] for s in range(1,6)]
+                  wins=sum(values[(wf,v,s)]>=max(values[(wf,z,s)] for z in variants)-1e-9 for s in range(1,6))
+                  diffs=[100*(values[(wf,v,s)]/max(1e-12,values[(wf,variants[0],s)])-1) for s in range(1,6)]
+                  report.append(f'| {wf} | {v} | {statistics.mean(vals):.5f} | {wins} | {statistics.mean(diffs):+.3f}% |')
+          report+=['','## Development-only mean paired effect per variant',
+                   'The following aggregates ONLY Montage, CyberShake, Sipht for selecting a candidate; the other two are holdout confirmation.','']
+          dev=[w for w in workflows if w.startswith(('Montage','CyberShake','Sipht'))]
+          for v in variants:
+              ds=[100*(values[(wf,v,s)]/max(1e-12,values[(wf,variants[0],s)])-1)
+                  for wf in dev for s in range(1,6)]
+              report.append(f'- {v}: {statistics.mean(ds):+.3f}% mean paired HV change on {len(ds)} development cases')
+          pathlib.Path('reports/ablation_report.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/ablation_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload ablation conclusions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-dag-ablation-report-${{ github.run_id }}
+          path: reports/
+          retention-days: 30
+          if-no-files-found: warn
