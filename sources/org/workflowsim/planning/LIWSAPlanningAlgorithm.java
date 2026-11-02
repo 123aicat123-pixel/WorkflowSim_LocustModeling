@@ -540,57 +540,25 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
 
     /** Insertion-based slot search on VM v; returns the task's finish time and books the slot. */
     private double placeOnVm(int v, double readyTime, double duration) {
-        double[] st = decEvStart[v];
-        double[] fi = decEvFinish[v];
-        int size = decEvCount[v];
-        if (size == 0) {
-            decInsert(v, 0, readyTime, readyTime + duration);
-            return readyTime + duration;
-        }
-        if (size == 1) {
-            double start;
-            int pos;
-            if (readyTime >= fi[0]) {
-                pos = 1;
-                start = readyTime;
-            } else if (readyTime + duration <= st[0]) {
-                pos = 0;
-                start = readyTime;
-            } else {
-                pos = 1;
-                start = fi[0];
-            }
-            decInsert(v, pos, start, start + duration);
-            return start + duration;
-        }
-        double start = Math.max(readyTime, fi[size - 1]);
-        double finish = start + duration;
-        int pos = size;
-        int i = size - 1;
-        int j = size - 2;
-        while (j >= 0) {
-            double currentStart = st[i];
-            double previousFinish = fi[j];
-            if (readyTime > previousFinish) {
-                if (readyTime + duration <= currentStart) {
-                    start = readyTime;
-                    finish = readyTime + duration;
-                }
+        double[] starts = decEvStart[v];
+        double[] finishes = decEvFinish[v];
+        int count = decEvCount[v];
+
+        // Place the task into the EARLIEST feasible gap. The arrays must
+        // stay sorted by start time: later tasks use them as a VM calendar.
+        // Updating start/finish without updating insertion position used
+        // to corrupt this order and permit overlapping VM executions.
+        double start = readyTime;
+        int position = count;
+        for (int i = 0; i < count; i++) {
+            if (start + duration <= starts[i]) {
+                position = i;
                 break;
             }
-            if (previousFinish + duration <= currentStart) {
-                start = previousFinish;
-                finish = previousFinish + duration;
-                pos = i;
-            }
-            i--;
-            j--;
+            start = Math.max(start, finishes[i]);
         }
-        if (readyTime + duration <= st[0]) {
-            decInsert(v, 0, readyTime, readyTime + duration);
-            return readyTime + duration;
-        }
-        decInsert(v, pos, start, finish);
+        double finish = start + duration;
+        decInsert(v, position, start, finish);
         return finish;
     }
 

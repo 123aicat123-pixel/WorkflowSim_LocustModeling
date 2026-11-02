@@ -35,9 +35,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find sources examples -type f -name '*.java' | sort > ci-logs/source-files.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/source-files.txt
           echo "Compiling $(wc -l < ci-logs/source-files.txt) Java source files"
           javac -nowarn -encoding UTF-8 -cp "lib/*" -d build/classes @ci-logs/source-files.txt 2>&1 | tee ci-logs/compile.log
+
+      - name: Assert 5-task two-VM decoder regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp "build/classes:lib/*" \
+            org.workflowsim.planning.DecoderInsertionRegressionTest \
+            2>&1 | tee ci-logs/decoder-regression.log
 
       - name: Check Montage_25 decoder against WorkflowSim
         shell: bash
