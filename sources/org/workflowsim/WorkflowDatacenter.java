@@ -133,6 +133,18 @@ public class WorkflowDatacenter extends Datacenter {
                 fileTransferTime = processDataStageInForComputeJob(job.getFileList(), job);
             }
 
+            // Optional measurements only: does not modify execution or billing.
+            // Use -Dworkflowsim.traceStageIn=true to inspect discrepancies between
+            // planning-only runtime and actual WorkflowSim stage-in overhead.
+            if (Boolean.getBoolean("workflowsim.traceStageIn")
+                    && job.getClassType() == ClassType.COMPUTE.value) {
+                System.out.printf(java.util.Locale.ROOT,
+                        "STAGEIN_TRACE,job=%d,vm=%d,clock=%.9f,compute=%.9f,stagein=%.9f,total=%.9f%n",
+                        job.getCloudletId(), vm.getId(), CloudSim.clock(),
+                        job.getCloudletLength() / vm.getMips(), fileTransferTime,
+                        job.getCloudletLength() / vm.getMips() + fileTransferTime);
+            }
+
             CloudletScheduler scheduler = vm.getCloudletScheduler();
             double estimatedFinishTime = scheduler.cloudletSubmit(job, fileTransferTime);
             updateTaskExecTime(job, vm);
