@@ -156,3 +156,36 @@ The output contains a summary CSV, a full set of simulator-replayed candidate as
 7. This repository branch is not verified byte-for-byte identical to the user's local Windows source tree.
 
 **Conservative current claim:** V6 novelty repair improves FLA search efficiency and is broadly competitive with NSGA-II at 25–100 tasks, without establishing superiority. It improves simulated HV against FLA-3W on 25–60 task workloads, but this advantage does not generalize to all five 100-task workflows; reconstructed MLEAO is an imperfect baseline. No journal acceptance/publishability is guaranteed.
+
+
+## Planning-front screening sensitivity: newly validated methodological caveat (2026-11-03)
+
+The previous research protocol passively recorded every evaluated assignment but only **replayed the assignments not dominated in the planning surrogate objective**. We tested whether this changes the simulator Pareto front; code and archive experiments are on `fla-baseline` only.
+
+**Moderate-budget sensitivity, population 30 × 100 generations**: three workflows (Montage_25, CyberShake_30, Sipht_30), seeds 1 and 2. For each of four algorithms, 12 additional UNIQUE, strictly planning-dominated assignments were selected: half nearest the planned front, half deterministic random from the remainder. These are **post-search diagnostic replays**, not extra objective-search evaluations. Under the *original frozen simulator HV reference*, average HV changes across six paired runs were:
+
+| Solver | Extra simulator replays | Newly nondominated against the original simulated front | Mean extra HV |
+|---|---:|---:|---:|
+| DAG-Pareto-FLA v6-pop | 72 | 18 | +0.104672% |
+| NSGA-II | 72 | 16 | +0.101342% |
+| FLA-3W | 72 | 11 | +0.030915% |
+| reconstructed MLEAO | 72 | 12 | +0.017558% |
+
+Sipht_30 showed larger effects: mean extra HV **+0.310912%** (v6-pop) and **+0.298352%** (NSGA-II). A sampled extra candidate might be nondominated relative to the original front but subsequently be dominated by a different extra candidate, so these counts should not be mistaken for net archive-cardinality increases.
+
+[Moderate-budget screening-bias data and artifacts](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41517581864).
+
+**Exhaustive observed-genotype pilot, population 8 × 9 generations:** all unique evaluated task-to-VM genotypes (including equal planned-objective ties) were replayed for three families, two paired seeds, and all four optimizers. The observed simulator Pareto front over the VISITED candidate set is now exact for that deliberately small search budget; it is not the globally optimal schedule set.
+
+- FLA v6-pop: **+0.793632%** mean extra simulated HV over six runs; 20 previously filtered candidates were nondominated versus the original simulated front.
+- NSGA-II: **+0.713691%** mean extra HV; two newly nondominated-versus-original candidates.
+- The largest per-run changes included **+4.699853%** for FLA v6 (Montage_25 seed 1) and **+4.282149%** for NSGA-II (Montage_25 seed 2).
+- The overall top-HV algorithm **did not change in any of the six small-budget cases (0/6)**. This does NOT establish ranking stability for the 30 × 100 or 100-task runs.
+
+[Full replay coverage assertions, CSVs, and winner-change report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41518305713).
+
+**Statistical conclusion:** filtering by planned Pareto dominance can systematically understate the HV achievable among evaluated schedules under actual simulator objectives. Our larger-budget simulator HV results are therefore **screening-dependent lower bounds**, not exhaustive observed-search simulator HV. This caveat applies to every solver, not just FLA. A two-seed 100-task sensitivity audit is also available as `fla-screening-100task.yml`; its outcomes must be checked separately rather than guessed.
+
+**Recorder correction:** `UnifiedCandidateRecorder.Capture.uniqueEvents()` now exposes each independent solver run's unique evaluated assignments for read-only audits. The FLA-3W summary's distinct-assignment count is deduplicated **across all three scalar weight runs**; earlier historical reports calculated the sum of per-weight distinct counts, which can overstate global distinctness if the same task assignment occurs under different weights. The previous reported 60.225% figure should therefore be labeled a historical, non-union count pending rerun, not a rigorously measured across-weight novelty rate.
+
+All screening-audit switches are disabled by default, so they do not silently alter the original experiment results.
