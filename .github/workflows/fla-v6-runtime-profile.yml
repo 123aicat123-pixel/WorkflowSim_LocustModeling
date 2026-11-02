@@ -1,0 +1,83 @@
+name: FLA v6 algorithm runtime and novelty overhead analysis
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v6-runtime-profile.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  runtime-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41511138304
+          github-token: ${{ github.token }}
+          pattern: v6-confirm-*-${{ '41511138304' }}
+          path: input
+          merge-multiple: false
+      - name: Analyze matched runtime and novelty ratios
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,statistics,collections,math
+          files=list(pathlib.Path('input').rglob('*_summary.csv'))
+          assert len(files)==25, len(files)
+          rows=[]
+          for p in files:
+              with p.open(newline='') as f: rows+=list(csv.DictReader(f))
+          assert len(rows)==100
+          bykey={}
+          for r in rows:
+              k=(r['workflow'],r['algorithm'],int(r['seed']))
+              assert k not in bykey
+              bykey[k]=r
+              assert int(r['captured_evaluations'])==int(r['evaluations'])
+              assert int(r['distinct_observed'])>0
+              assert int(r['search_ms'])>=0
+          workflows=sorted({r['workflow'] for r in rows})
+          variants=('DAG-Pareto-FLA[v6-pop]','NSGA-II','FLA-3W','MLEAO')
+          report=[
+              '# V6 algorithm search latency and novelty cost',
+              '',
+              'Source: 25 paired simulator benchmarks (run 41511138304); runtime measured by Java System.nanoTime inside each solver.',
+              'Cloud-host runner scheduling and JIT effects are uncontrolled. These are indicative search timings, not benchmark-grade CPU profiling.',
+              'This report does not include simulator replay wall time. A search_ms of zero may be due to integer millisecond resolution.',
+              '',
+              '| Algorithm | Median optimizer search time (ms) | Mean distinct / eval % | Mean planned ND replay candidates |',
+              '|---|---:|---:|---:|']
+          for a in variants:
+              g=[r for r in rows if r['algorithm']==a]
+              assert len(g)==25
+              times=[float(r['search_ms']) for r in g]
+              distinct=[100*int(r['distinct_observed'])/int(r['captured_evaluations']) for r in g]
+              report.append(f'| {a} | {statistics.median(times):.2f} | {statistics.mean(distinct):.3f} | {statistics.mean(float(r["replayed"]) for r in g):.2f} |')
+          report+=['','## Per-workflow matched search time medians (ms)','',
+                   '| Workflow | v6 | NSGA-II | FLA-3W | MLEAO |',
+                   '|---|---:|---:|---:|---:|']
+          for wf in workflows:
+              med=lambda alg: statistics.median(float(bykey[(wf,alg,seed)]['search_ms']) for seed in range(1,6))
+              report.append(f'| {wf} | {med(variants[0]):.2f} | {med(variants[1]):.2f} | {med(variants[2]):.2f} | {med(variants[3]):.2f} |')
+          report+=['','## Scientific limitations','- JIT/warmup and noisy shared CPU are not controlled; a dedicated microbenchmark is needed for strong runtime claims.',
+                   '- Search algorithm time is not end-to-end WorkflowSim processing time.',
+                   '- Matching evaluation counts does not force identical operator complexity.']
+          pathlib.Path('reports/runtime_and_novelty.md').write_text('\n'.join(report)+'\n')
+          with pathlib.Path('reports/runtime_raw.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+          print('\n'.join(report))
+          PY
+          cat reports/runtime_and_novelty.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v6-runtime-evidence-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
