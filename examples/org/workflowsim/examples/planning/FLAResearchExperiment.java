@@ -172,7 +172,8 @@ public final class FLAResearchExperiment {
     private static Run runDag(String dax,long seed,int pop,int gens,String variant) {
         final List<String> supported=Arrays.asList("all","no-dag","no-cross",
                 "no-archive-sso","no-adaptive-mutation","no-adaptive-preference","minimal",
-                "v2-global","v2-immigrants","v2");
+                "v2-global","v2-immigrants","v2",
+                "v3-resource","v3-archive","v3-both");
         if (!supported.contains(variant)) throw new IllegalArgumentException("Unknown ablation: " + variant);
         final boolean minimal="minimal".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_DAG_GUIDANCE = !minimal && !"no-dag".equals(variant);
@@ -180,10 +181,14 @@ public final class FLAResearchExperiment {
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_SSO = !minimal && !"no-archive-sso".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_MUTATION = !minimal && !"no-adaptive-mutation".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = !minimal && !"no-adaptive-preference".equals(variant);
-        boolean isV2=variant.startsWith("v2");
+        boolean isV2=variant.startsWith("v2") || variant.startsWith("v3");
         if(isV2) DAGParetoFLAPlanningAlgorithm.CONFIG_CROSS_GROUP_DO=false;
+        DAGParetoFLAPlanningAlgorithm.CONFIG_RESOURCE_AWARE_MUTATION =
+                "v3-resource".equals(variant) || "v3-both".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_RECOMBINATION =
+                "v3-archive".equals(variant) || "v3-both".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_GLOBAL_SURVIVOR_SELECTION =
-                "v2-global".equals(variant) || "v2".equals(variant);
+                "v2-global".equals(variant) || "v2".equals(variant) || variant.startsWith("v3");
         DAGParetoFLAPlanningAlgorithm.CONFIG_RANDOM_IMMIGRANTS =
                 "v2-immigrants".equals(variant) || "v2".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
