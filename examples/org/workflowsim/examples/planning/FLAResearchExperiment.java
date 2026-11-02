@@ -9,6 +9,10 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.Random;
+import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -35,6 +39,8 @@ import org.workflowsim.utils.Parameters;
  */
 public final class FLAResearchExperiment {
     private FLAResearchExperiment() {}
+    /** Read-only optional diagnostic, disabled by default. */
+    private static final int SCREENING_AUDIT_N = Integer.getInteger("dagfla.screeningAuditPerAlgorithm", 0);
 
     private static final class Candidate {
         final double[] planned;
@@ -56,6 +62,12 @@ public final class FLAResearchExperiment {
         int capturedEvaluations;
         int distinctObservedAssignments;
         List<double[]> simulatorFront;
+        final List<Candidate> allVisited = new ArrayList<>();
+        final List<Candidate> audited = new ArrayList<>();
+        final List<String> auditStrata = new ArrayList<>();
+        int dominatedPool;
+        int newSimulatorNondominated;
+        double auditHvGain;
         double simHv;
         double planHv;
         Run(String name) { algorithm = name; }
@@ -70,6 +82,7 @@ public final class FLAResearchExperiment {
         int pop = Integer.parseInt(args[2]);
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
+        if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 100) throw new IllegalArgumentException("invalid diagnostic sample count");
         Path prefix = Paths.get(args[4]);
         if (prefix.getParent() != null) Files.createDirectories(prefix.getParent());
         String dax = "config/dax/" + wf + ".xml";
@@ -139,7 +152,14 @@ public final class FLAResearchExperiment {
             for (Candidate c:run.candidates) x.add(c.planned);
             run.planHv = ParetoMetrics.hypervolume2D(ndPoints(x),planRef[0],planRef[1]);
         }
+        // Scientific sensitivity audit, not part of the optimization budget:
+        // after freezing the normal simulator HV reference, replay a random/
+        // near-front sample of PLANNING-DOMINATED evaluated assignments.
+        if (SCREENING_AUDIT_N > 0) {
+            for (Run run : runs) runScreeningAudit(dax, wf, seed, run, simRef);
+        }
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
+        if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
     }
 
     private static Run runScalar(String dax, long seed, int pop, int gens) {
@@ -172,6 +192,7 @@ public final class FLAResearchExperiment {
             run.distinctObservedAssignments += capture.distinctAssignments();
             run.searchMs += m.searchWallClockMillis;
             append(run,capture.frontPoints(),capture.frontAssignments());
+            appendAuditHistory(run,capture);
         }
         return run;
     }
@@ -229,6 +250,7 @@ public final class FLAResearchExperiment {
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
         append(r,capture.frontPoints(),capture.frontAssignments());
+        appendAuditHistory(r,capture);
         return r;
     }
     private static Run runNsga(String dax,long seed,int pop,int gens) {
@@ -272,6 +294,128 @@ public final class FLAResearchExperiment {
         r.distinctObservedAssignments=capture.distinctAssignments();
         r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
         return r;
+    }
+
+
+    /** Keep every DISTINCT genotype to quantify planned-front screening bias. */
+    private static void appendAuditHistory(Run run,UnifiedCandidateRecorder.Capture cap) {
+        if (SCREENING_AUDIT_N == 0) return;
+        for (UnifiedCandidateRecorder.Event e : cap.uniqueEvents()) {
+            run.allVisited.add(new Candidate(new double[]{e.makespan,e.cost},e.assignment));
+        }
+    }
+
+    private static double normalizedDistance(Candidate x,List<Candidate> front) {
+        double best=Double.POSITIVE_INFINITY;
+        for(Candidate f:front) {
+            double dm=(x.planned[0]-f.planned[0])/Math.max(1.0,f.planned[0]);
+            double dc=(x.planned[1]-f.planned[1])/Math.max(1.0,f.planned[1]);
+            best=Math.min(best,Math.hypot(dm,dc));
+        }
+        return best;
+    }
+
+    /**
+     * Equal diagnostic replay policy for EVERY algorithm:
+     * half near the planned front, half uniformly shuffled among the
+     * remaining strictly planning-dominated UNIQUE assignments.
+     *
+     * Additional replays NEVER enter the optimization archive and therefore
+     * do not alter reported benchmark fitness calls or primary HV.
+     */
+    private static void runScreeningAudit(String dax,String wf,long seed,Run run,double[] frozenRef) {
+        Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
+        for(Candidate c:run.allVisited) unique.putIfAbsent(c.assignment,c);
+        List<Candidate> dominated=new ArrayList<>();
+        Set<Map<Integer,Integer>> frontAssignments=new HashSet<>();
+        for(Candidate c:run.candidates)frontAssignments.add(c.assignment);
+        for(Candidate c:unique.values()) {
+            if(frontAssignments.contains(c.assignment))continue;
+            boolean strict=false;
+            for(Candidate f:run.candidates) {
+                if(dominates(f.planned,c.planned)) { strict=true; break; }
+            }
+            if(strict)dominated.add(c);
+        }
+        run.dominatedPool=dominated.size();
+        dominated.sort(Comparator.comparingDouble(c->normalizedDistance(c,run.candidates)));
+        int take=Math.min(SCREENING_AUDIT_N,dominated.size());
+        int nearest=take/2;
+        for(int i=0;i<nearest;i++){
+            run.audited.add(dominated.get(i));
+            run.auditStrata.add("near-planned-front");
+        }
+        List<Candidate> remaining=new ArrayList<>(dominated.subList(nearest,dominated.size()));
+        Collections.shuffle(remaining,new Random(seed ^ ((long)run.algorithm.hashCode()*0x9E3779B97F4A7C15L)));
+        for(int i=0;i<take-nearest;i++){
+            run.audited.add(remaining.get(i));
+            run.auditStrata.add("uniform-remainder");
+        }
+        List<double[]> all=new ArrayList<>(run.simulatorFront);
+        for(Candidate c:run.audited) {
+            LIWSABenchmarkExample.RunResult res=LIWSABenchmarkExample.runPlanning(
+                    dax,Parameters.PlanningAlgorithm.LIWSA,
+                    Parameters.SchedulingAlgorithm.STATIC,
+                    "screening_audit_"+run.algorithm.replace("-","_"),seed,
+                    1,0,Collections.singletonList(c.assignment));
+            if(res==null || !c.assignment.equals(new TreeMap<>(res.assignment)))
+                throw new IllegalStateException("Invalid dominated-sample assignment replay");
+            c.simulated=new double[]{res.makespan,res.cost};
+            valid(c.simulated);
+            boolean improved=true;
+            for(double[] q:run.simulatorFront) {
+                if(dominates(q,c.simulated) ||
+                    (q[0]==c.simulated[0]&&q[1]==c.simulated[1])) {
+                    improved=false;break;
+                }
+            }
+            if(improved)run.newSimulatorNondominated++;
+            all.add(c.simulated);
+        }
+        List<double[]> newFront=ndPoints(all);
+        double extraHv=ParetoMetrics.hypervolume2D(newFront,frozenRef[0],frozenRef[1]);
+        run.auditHvGain=Math.max(0.0,extraHv-run.simHv);
+        if(extraHv+1e-7*Math.max(1,Math.abs(run.simHv))<run.simHv)
+            throw new IllegalStateException("Hypervolume lost after adding candidate points");
+        System.out.printf(Locale.ROOT,
+                "SCREENING_AUDIT %s %s seed=%d strictDominated=%d sampled=%d nondominatedVsBase=%d hvBase=%.9f hvExtra=%.9f delta=%.9f%n",
+                wf,run.algorithm,seed,run.dominatedPool,run.audited.size(),
+                run.newSimulatorNondominated,run.simHv,extraHv,run.auditHvGain);
+    }
+
+    private static void saveScreeningAudit(String wf,long seed,Path prefix,List<Run> runs)
+            throws IOException {
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_screening_summary.csv"),StandardCharsets.UTF_8)) {
+            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\\n");
+            for(Run r:runs) {
+                double pct=100.0*r.auditHvGain/Math.max(1e-12,r.simHv);
+                w.write(String.format(Locale.ROOT,
+                    "%s,%s,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.8f%n",
+                    wf,r.algorithm,seed,r.distinctObservedAssignments,r.dominatedPool,
+                    r.audited.size(),r.newSimulatorNondominated,r.simHv,
+                    r.simHv+r.auditHvGain,r.auditHvGain,pct));
+            }
+        }
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_screening_samples.csv"),StandardCharsets.UTF_8)) {
+            w.write("workflow,algorithm,seed,stratum,planned_makespan,planned_cost,sim_makespan,sim_cost,mapping\\n");
+            for(Run r:runs) {
+                for(int i=0;i<r.audited.size();i++) {
+                    Candidate c=r.audited.get(i);
+                    StringBuilder mapping=new StringBuilder();
+                    for(Map.Entry<Integer,Integer> e:c.assignment.entrySet()){
+                        if(mapping.length()>0)mapping.append('|');
+                        mapping.append(e.getKey()).append(':').append(e.getValue());
+                    }
+                    w.write(String.format(Locale.ROOT,
+                        "%s,%s,%d,%s,%.9f,%.9f,%.9f,%.9f,%s%n",
+                        wf,r.algorithm,seed,r.auditStrata.get(i),
+                        c.planned[0],c.planned[1],c.simulated[0],c.simulated[1],
+                        mapping.toString()));
+                }
+            }
+        }
     }
 
     private static void append(Run run,List<double[]> points,List<Map<Integer,Integer>> mappings) {
