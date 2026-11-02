@@ -44,6 +44,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     // Experimental v3 operators: only affect the DAG-Pareto-FLA planner.
     public static boolean CONFIG_RESOURCE_AWARE_MUTATION = false;
     public static boolean CONFIG_ARCHIVE_RECOMBINATION = false;
+    /** v4 alternative: strict non-dominated rank + crowding environmental selection. */
+    public static boolean CONFIG_PARETO_CROWDING_SELECTION = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -104,7 +106,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean enforcePes;
     private final boolean useDag, useCross, useArchiveSso, useAdaptiveMutation, useAdaptivePreference;
     private final boolean useGlobalSelection, useImmigrants;
-    private final boolean useResourceAwareMutation, useArchiveRecombination;
+    private final boolean useResourceAwareMutation, useArchiveRecombination, useParetoCrowdingSelection;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -136,6 +138,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useImmigrants = CONFIG_RANDOM_IMMIGRANTS;
         useResourceAwareMutation = CONFIG_RESOURCE_AWARE_MUTATION;
         useArchiveRecombination = CONFIG_ARCHIVE_RECOMBINATION;
+        useParetoCrowdingSelection = CONFIG_PARETO_CROWDING_SELECTION;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -254,8 +257,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             if(useGlobalSelection) {
                 // Experimental NSGA-style global Pareto elitism before the next
                 // two-group FLA phase; NOT an original MATLAB FLA equation.
-                List<Solution> survivors=selectGroup(union,0,populationSize,
-                        globalRank,globalCrowd,b,0.5);
+                List<Solution> survivors=useParetoCrowdingSelection
+                        ? selectGlobalCrowding(union,populationSize,globalRank,globalCrowd)
+                        : selectGroup(union,0,populationSize,globalRank,globalCrowd,b,0.5);
                 survivors.sort(Comparator.comparingDouble((Solution x)->preference(x,alpha1,b))
                         .thenComparingDouble(x->x.makespan)
                         .thenComparingDouble(x->x.cost));
@@ -629,6 +633,45 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         return cd;
+    }
+
+
+    /**
+     * NSGA-II-style environmental selection over the full parent+child pool.
+     * Non-dominated rank is primary; crowding distance preserves extremes and
+     * front spread. Duplicate genotypes are rejected on the first pass.
+     *
+     * This is explicitly a proposed NSGA-II/FLA hybrid selection operator,
+     * NOT an original FLA equation. The number of evaluated offspring is
+     * unchanged. It only reorders/retains existing candidate solutions.
+     */
+    private List<Solution> selectGlobalCrowding(List<Solution> candidates,int size,
+            int[] ranks,double[] crowd) {
+        List<Integer> order=new ArrayList<>();
+        for(int i=0;i<candidates.size();i++)order.add(i);
+        order.sort((a,b)->{
+            int c=Integer.compare(ranks[a],ranks[b]);
+            if(c!=0)return c;
+            c=Double.compare(crowd[b],crowd[a]);
+            if(c!=0)return c;
+            c=Double.compare(candidates.get(a).makespan,candidates.get(b).makespan);
+            if(c!=0)return c;
+            return Integer.compare(a,b);
+        });
+        List<Solution> chosen=new ArrayList<>(size);
+        for(int i:order) {
+            Solution next=candidates.get(i);
+            boolean duplicate=false;
+            for(Solution c:chosen)if(Arrays.equals(c.genes,next.genes)){duplicate=true;break;}
+            if(!duplicate)chosen.add(next);
+            if(chosen.size()==size)return chosen;
+        }
+        for(int i:order) {
+            chosen.add(candidates.get(i));
+            if(chosen.size()==size)break;
+        }
+        if(chosen.size()!=size)throw new IllegalStateException("Insufficient candidates");
+        return chosen;
     }
 
     private List<Solution> selectGroup(List<Solution> candidates,int offset,int size,
