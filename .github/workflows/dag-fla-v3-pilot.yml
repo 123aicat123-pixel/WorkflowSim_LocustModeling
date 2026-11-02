@@ -71,8 +71,8 @@ jobs:
           name: dagv3-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
           path: |
             ci-logs/
-            Output&Results/v2_*_replays.csv
-            Output&Results/v2_*_summary.csv
+            Output&Results/v3_*_replays.csv
+            Output&Results/v3_*_summary.csv
           if-no-files-found: warn
           retention-days: 45
 
@@ -127,7 +127,7 @@ jobs:
                   'Hypervolume is always recomputed from actual simulator replays under one workflow reference.',
                   'Planning-nondominated replay is not an exhaustive simulator Pareto front.',
                   '',
-                  '| Workflow | Variant | Mean simulated HV | Mean paired change vs no-cross |',
+                  '| Workflow | Variant | Mean simulated HV | Mean paired change vs v2-global |',
                   '|---|---|---:|---:|']
           for wf in workflows:
               for a in algs:
