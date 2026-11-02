@@ -515,6 +515,7 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     private int[] decEvCount;
     private double[] decFinish;
     private int[] decAssigned;
+    private UnifiedScheduleEvaluator unifiedScheduleEvaluator;
     /** Number of objective evaluations (genotype decodes) performed in this run. */
     protected long evaluationCount = 0;
 
@@ -553,71 +554,19 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
         decEvCount = new int[m];
         decFinish = new double[n];
         decAssigned = new int[n];
+        unifiedScheduleEvaluator = new UnifiedScheduleEvaluator(
+                decParentIdx, decParentTransfer, decDuration, decVmPrice,
+                decEvStart, decEvFinish, decEvCount, decFinish, decAssigned);
     }
 
-    private void decInsert(int v, int pos, double start, double finish) {
-        int size = decEvCount[v];
-        double[] st = decEvStart[v];
-        double[] fi = decEvFinish[v];
-        if (pos < size) {
-            System.arraycopy(st, pos, st, pos + 1, size - pos);
-            System.arraycopy(fi, pos, fi, pos + 1, size - pos);
-        }
-        st[pos] = start;
-        fi[pos] = finish;
-        decEvCount[v] = size + 1;
-    }
+    
 
     /** Insertion-based slot search on VM v; returns the task's finish time and books the slot. */
-    private double placeOnVm(int v, double readyTime, double duration) {
-        double[] starts = decEvStart[v];
-        double[] finishes = decEvFinish[v];
-        int count = decEvCount[v];
-
-        // Place the task into the EARLIEST feasible gap. The arrays must
-        // stay sorted by start time: later tasks use them as a VM calendar.
-        // Updating start/finish without updating insertion position used
-        // to corrupt this order and permit overlapping VM executions.
-        double start = readyTime;
-        int position = count;
-        for (int i = 0; i < count; i++) {
-            if (start + duration <= starts[i]) {
-                position = i;
-                break;
-            }
-            start = Math.max(start, finishes[i]);
-        }
-        double finish = start + duration;
-        decInsert(v, position, start, finish);
-        return finish;
-    }
+    
 
     protected double[] decode(int[] genotype) {
         evaluationCount++;
-        java.util.Arrays.fill(decEvCount, 0);
-        double cost = 0.0;
-        double makespan = 0.0;
-        for (int k = 0; k < decN; k++) {
-            int v = genotype[k];
-            double ready = 0.0;
-            int[] parents = decParentIdx[k];
-            double[] transfer = decParentTransfer[k];
-            for (int q = 0; q < parents.length; q++) {
-                int p = parents[q];
-                double pf = decFinish[p];
-                if (decAssigned[p] != v) {
-                    pf += transfer[q];
-                }
-                ready = Math.max(ready, pf);
-            }
-            double duration = decDuration[k][v];
-            double fin = placeOnVm(v, ready, duration);
-            decFinish[k] = fin;
-            decAssigned[k] = v;
-            cost += duration * decVmPrice[v];
-            makespan = Math.max(makespan, fin);
-        }
-        return new double[]{makespan, cost};
+        return unifiedScheduleEvaluator.evaluate(genotype);
     }
 
     /** cloudlet ID -> VM ID map for a genotype, usable as a warm-start / replay schedule. */

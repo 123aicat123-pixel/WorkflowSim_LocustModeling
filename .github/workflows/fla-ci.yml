@@ -47,6 +47,14 @@ jobs:
             org.workflowsim.planning.DecoderInsertionRegressionTest \
             2>&1 | tee ci-logs/decoder-regression.log
 
+      - name: Assert shared evaluator against independent random-DAG oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp "build/classes:lib/*" \
+            org.workflowsim.planning.UnifiedEvaluatorPropertiesTest \
+            2>&1 | tee ci-logs/unified-evaluator-properties.log
+
       - name: Check Montage_25 decoder against WorkflowSim
         shell: bash
         run: |

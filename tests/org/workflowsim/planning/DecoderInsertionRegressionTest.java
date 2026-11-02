@@ -51,6 +51,14 @@ public final class DecoderInsertionRegressionTest {
         set(cls, algorithm, "decEvCount", new int[2]);
         set(cls, algorithm, "decFinish", new double[5]);
         set(cls, algorithm, "decAssigned", new int[5]);
+        set(cls, algorithm, "unifiedScheduleEvaluator",
+            new UnifiedScheduleEvaluator(
+                PARENTS, TRANSFER, durations, new double[] {1, 1},
+                (double[][]) get(cls, algorithm, "decEvStart"),
+                (double[][]) get(cls, algorithm, "decEvFinish"),
+                (int[]) get(cls, algorithm, "decEvCount"),
+                (double[]) get(cls, algorithm, "decFinish"),
+                (int[]) get(cls, algorithm, "decAssigned")));
 
         Method decode = cls.getDeclaredMethod("decode", int[].class);
         decode.setAccessible(true);
