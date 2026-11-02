@@ -1,0 +1,90 @@
+name: WorkflowSim decoder-fidelity matrix
+
+on:
+  push:
+    branches: [fla-baseline]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  matrix-diagnostics:
+    name: Planning-vs-simulation measurement across five DAG families
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout research branch
+        uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build all Java sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs "Output&Results"
+          git rev-parse HEAD | tee ci-logs/commit-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/source-files.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/source-files.txt 2>&1 | tee ci-logs/compile.log
+      - name: Replay actual workflow schedules
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.DecoderFidelityCheck \
+            'Montage_25,CyberShake_30,CyberShake_50,CyberShake_100,Sipht_30,Epigenomics_24,Inspiral_30' \
+            '1,2,3' 'Output&Results/fidelity_matrix.csv' 2>&1 | tee ci-logs/fidelity-matrix.log
+          test -s 'Output&Results/fidelity_matrix.csv'
+      - name: Validate and summarize measured errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,math,statistics,pathlib,collections
+          out=pathlib.Path('Output&Results')
+          with (out/'fidelity_matrix.csv').open(newline='') as f: rows=list(csv.DictReader(f))
+          expected={'Montage_25','CyberShake_30','CyberShake_50','CyberShake_100','Sipht_30','Epigenomics_24','Inspiral_30'}
+          assert len(rows)==7*8, f'Expected 56 rows, got {len(rows)}'
+          assert {r['workflow'] for r in rows} == expected
+          summary=['# Decoder fidelity — measured in WorkflowSim','','These measurements must NOT be confused with algorithm search quality.',
+          'High planning/simulation mismatch invalidates direct use of planning Pareto/HV as simulated Pareto/HV.',
+          'Percentage = 100*(simulated-planned)/planned; below table reports median absolute percentage error.',
+          '',
+          '| Workflow | Algorithm | Makespan error % | Cost error % |','|---|---|---:|---:|']
+          alarm=[]
+          for wf in sorted(expected):
+              for alg in ('HEFT-schedule','MinMin-schedule','LIWSA-chosen','NSGA-II-chosen'):
+                  group=[r for r in rows if r['workflow']==wf and r['run']==alg]
+                  count=1 if alg.endswith('-schedule') else 3
+                  assert len(group)==count,(wf,alg,len(group))
+                  assert {int(r['seed']) for r in group}==({0} if count==1 else {1,2,3})
+                  err=[]
+                  for r in group:
+                      for v in ('planned_makespan','sim_makespan','planned_cost','sim_cost'):
+                          assert math.isfinite(float(r[v])) and float(r[v])>0, (wf,alg,v)
+                      err.append((100*abs(float(r['sim_makespan'])-float(r['planned_makespan']))/float(r['planned_makespan']),
+                        100*abs(float(r['sim_cost'])-float(r['planned_cost']))/float(r['planned_cost'])))
+                  m=statistics.median(e[0] for e in err); c=statistics.median(e[1] for e in err)
+                  summary.append(f'| {wf} | {alg} | {m:.3f} | {c:.3f} |')
+                  if m>10 or c>10: alarm.append((wf,alg,m,c))
+          summary+=['','## Review flags (threshold for attention only, NOT a hard failure)','',
+                    f'{len(alarm)} workflow/algorithm combinations exceed 10% median absolute error.','']
+          summary.extend(f'- {w} / {a}: makespan {m:.3f}% / cost {c:.3f}%' for w,a,m,c in alarm)
+          (out/'fidelity_matrix_report.md').write_text('\n'.join(summary)+'\n',encoding='utf-8')
+          print('\n'.join(summary))
+          PY
+          cat 'Output&Results/fidelity_matrix_report.md' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve raw data and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fidelity-matrix-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/fidelity_matrix.csv
+            Output&Results/fidelity_matrix_summary.*
+            Output&Results/fidelity_matrix_report.md
+          if-no-files-found: warn
+          retention-days: 30
