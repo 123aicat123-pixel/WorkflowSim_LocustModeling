@@ -213,3 +213,30 @@ java -Dworkflowsim.planningStageInAware=true \
 - [v4 负结果消融](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/dag-fla-v4-pilot.yml)
 
 本报告中的定量结果均来自明确列出的 GitHub Actions run；没有将相互不同的 reference point 下的 HV 绝对值混用。GitHub Actions artifacts 会过期，因此关键汇总及对应链接保存在此 Git 跟踪文档，原始候选与日志目前仍可在相应 Actions 产物下载。
+
+## 11. 独立算法交叉验证：Stage-in 模型改善并非 NSGA-II 独有
+
+为了排除“新评价函数只适用于 NSGA-II”的解释，额外以 **MATLAB FLA v1.0 连续版本的三权重离散改造 FLA-3W** 做相同的控制实验。
+
+[FLA-3W 25 组配对真实 WorkflowSim 实验及 CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41509595684)。
+
+- 搜索算子、随机种子、任务 VM 资源池、工作流文件和真实 simulator 相同。
+- 每个模型三个 scalar weights (`0.2 / 0.5 / 0.8`)、合计 3006 次目标评价；仅切换 `-Dworkflowsim.planningStageInAware`。
+- 所有访问的**规划非支配**独特分配分别仿真，按每个工作流跨两个模型及全部种子冻结的 HV reference 评分。
+- 不把 FLA-3W 当作原生多目标 FLA；不能把模型改善归于 FLA 的新搜索公式。
+
+| Workflow | Old objective mean simulated HV | Stage-in-aware objective mean simulated HV | Mean paired % change | Positive seeds |
+|---|---:|---:|---:|---:|
+| CyberShake_30 | 113214.3883 | 508749.3282 | **+349.556%** | 5/5 |
+| Epigenomics_24 | 4292978.7649 | 4741898.2636 | **+12.664%** | 5/5 |
+| Inspiral_30 | 1016514.1552 | 1037270.3152 | +2.079% | 4/5 |
+| Montage_25 | 1241.9521 | 1261.4550 | +1.608% | 3/5 |
+| Sipht_30 | 208698.1212 | 210560.5836 | +0.894% | 5/5 |
+
+**25 个 paired cases 中 22/25 提升。** 对照 NSGA-II 的相应结果为 21/25 种子提升；两个独立算法在方向上均支持更准确模型的重要性，效果大小差异很大，尤其 CyberShake 的文件读取使旧估计显著失真。
+
+该结果属于 **evaluation-model ablation with two separate solvers**。研究论文应以“真实 WorkflowSim stage-in 约束与 cost 耦合的多目标调度评价/优化框架”为问题与贡献线索，而不是以“某种新的 FLA 在五类工作流上压倒 NSGA-II”为主张。进一步需要真实大规模 benchmark、更多随机种子和自适应仿真选择策略。
+
+**最新可复现 CI：** [fla-stagein-causal-check.yml](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/blob/fla-baseline/.github/workflows/fla-stagein-causal-check.yml)。
+
+**最终解释边界：** 上述 HV 都是各自 experiment run 内的冻参考点指标，不可把不同表格的绝对 HV 混算。通过计划层非支配筛选的仿真回放仍非全候选 simulator Pareto 集。尚未进行 GitHub vs Windows 本地项目的 SHA-256 文件级对比。
