@@ -551,7 +551,9 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
 
     protected double[] decode(int[] genotype) {
         evaluationCount++;
-        return unifiedScheduleEvaluator.evaluate(genotype);
+        double[] objectives = unifiedScheduleEvaluator.evaluate(genotype);
+        UnifiedCandidateRecorder.record(taskOrder, vmList, genotype, objectives[0], objectives[1]);
+        return objectives;
     }
 
     /** cloudlet ID -> VM ID map for a genotype, usable as a warm-start / replay schedule. */

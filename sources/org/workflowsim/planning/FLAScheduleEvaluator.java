@@ -351,6 +351,7 @@ public final class FLAScheduleEvaluator {
             cost+=d*vmPrice[v];
             makespan=Math.max(makespan,fin);
         }
+        UnifiedCandidateRecorder.record(taskOrder, vmList, g, makespan, cost);
         return new double[]{makespan,cost};
     }
 

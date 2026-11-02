@@ -20,6 +20,7 @@ import org.workflowsim.planning.FLABaselinePlanningAlgorithm;
 import org.workflowsim.planning.LIWSAPlanningAlgorithm;
 import org.workflowsim.planning.MLEAOPlanningAlgorithm;
 import org.workflowsim.planning.NSGAIIPlanningAlgorithm;
+import org.workflowsim.planning.UnifiedCandidateRecorder;
 import org.workflowsim.utils.Parameters;
 
 /**
@@ -51,6 +52,8 @@ public final class FLAResearchExperiment {
         int evals;
         long searchMs;
         int sourceFrontSize;
+        int capturedEvaluations;
+        int distinctObservedAssignments;
         List<double[]> simulatorFront;
         double simHv;
         double planHv;
@@ -140,6 +143,8 @@ public final class FLAResearchExperiment {
         int[] distributed = {scalarGenerations/3,scalarGenerations/3,scalarGenerations/3};
         for (int i = 0; i < scalarGenerations % 3; i++) distributed[i]++;
         for (int i = 0; i < weights.length; i++) {
+            UnifiedCandidateRecorder.begin((long)pop*(distributed[i]+1)+2);
+            UnifiedCandidateRecorder.phase("FLA-weight-"+weights[i]);
             FLABaselinePlanningAlgorithm.CONFIG_COLLECT_ARCHIVE = true;
             FLABaselinePlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
             FLABaselinePlanningAlgorithm.CONFIG_MAKESPAN_WEIGHT = weights[i];
@@ -150,9 +155,14 @@ public final class FLAResearchExperiment {
                     pop,distributed[i],null);
             FLABaselinePlanningAlgorithm.LastRunMetrics m = FLABaselinePlanningAlgorithm.lastRun;
             if (result == null || m == null) throw new IllegalStateException("FLA scalar failed weight " + weights[i]);
-            run.evals += Math.toIntExact(m.objectiveEvaluations);
+            UnifiedCandidateRecorder.Capture capture=UnifiedCandidateRecorder.end();
+            if(capture.evaluationCount()!=m.objectiveEvaluations)
+                throw new IllegalStateException("FLA source-counter and recorder mismatch");
+            run.evals += capture.evaluationCount();
+            run.capturedEvaluations += capture.evaluationCount();
+            run.distinctObservedAssignments += capture.distinctAssignments();
             run.searchMs += m.searchWallClockMillis;
-            append(run,m.paretoFrontPoints,m.paretoFrontAssignments);
+            append(run,capture.frontPoints(),capture.frontAssignments());
         }
         return run;
     }
@@ -168,38 +178,59 @@ public final class FLAResearchExperiment {
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = !minimal && !"no-adaptive-preference".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
         DAGParetoFLAPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = null;
+        UnifiedCandidateRecorder.begin((long)pop*(gens+2));
+        UnifiedCandidateRecorder.phase("DAG-FLA-"+variant);
         LIWSABenchmarkExample.RunResult result = LIWSABenchmarkExample.runPlanning(
                 dax,Parameters.PlanningAlgorithm.DAG_PARETO_FLA,
                 Parameters.SchedulingAlgorithm.STATIC,"DAG-Pareto-FLA",seed,pop,gens,null);
         DAGParetoFLAPlanningAlgorithm.LastRunMetrics m = DAGParetoFLAPlanningAlgorithm.lastRun;
         if(result==null||m==null) throw new IllegalStateException("DAG-FLA failed");
+        UnifiedCandidateRecorder.Capture capture=UnifiedCandidateRecorder.end();
+        if(capture.evaluationCount()!=m.objectiveEvaluations)
+            throw new IllegalStateException("DAG-FLA source-counter and recorder mismatch");
         Run r = new Run("DAG-Pareto-FLA" + ("all".equals(variant) ? "" : "["+variant+"]"));
-        r.evals=Math.toIntExact(m.objectiveEvaluations);r.searchMs=m.searchWallClockMillis;
-        append(r,m.paretoFrontPoints,m.paretoFrontAssignments);
+        r.evals=capture.evaluationCount();r.searchMs=m.searchWallClockMillis;
+        r.capturedEvaluations=capture.evaluationCount();
+        r.distinctObservedAssignments=capture.distinctAssignments();
+        append(r,capture.frontPoints(),capture.frontAssignments());
         return r;
     }
     private static Run runNsga(String dax,long seed,int pop,int gens) {
         NSGAIIPlanningAlgorithm.CONFIG_OUTPUT_ARCHIVE=true;
         NSGAIIPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS=null;
+        UnifiedCandidateRecorder.begin((long)pop*(gens+2));
+        UnifiedCandidateRecorder.phase("NSGA-II");
         LIWSABenchmarkExample.RunResult result=LIWSABenchmarkExample.runPlanning(
                 dax,Parameters.PlanningAlgorithm.NSGAII,Parameters.SchedulingAlgorithm.STATIC,
                 "NSGA-II",seed,pop,gens,null);
         NSGAIIPlanningAlgorithm.LastRunMetrics m=NSGAIIPlanningAlgorithm.lastRun;
         if(result==null||m==null)throw new IllegalStateException("NSGA-II failed");
-        Run r=new Run("NSGA-II");r.evals=Math.toIntExact(m.objectiveEvaluations);
-        r.searchMs=m.searchWallClockMillis;append(r,m.paretoFrontPoints,m.paretoFrontAssignments);
+        UnifiedCandidateRecorder.Capture capture=UnifiedCandidateRecorder.end();
+        if(capture.evaluationCount()!=m.objectiveEvaluations)
+            throw new IllegalStateException("NSGA-II source-counter and recorder mismatch");
+        Run r=new Run("NSGA-II");r.evals=capture.evaluationCount();
+        r.capturedEvaluations=capture.evaluationCount();
+        r.distinctObservedAssignments=capture.distinctAssignments();
+        r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
         return r;
     }
     private static Run runMleao(String dax,long seed,int pop,int gens) {
         MLEAOPlanningAlgorithm.CONFIG_OUTPUT_ARCHIVE=true;
         MLEAOPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS=null;
+        UnifiedCandidateRecorder.begin((long)pop*(gens+2));
+        UnifiedCandidateRecorder.phase("MLEAO");
         LIWSABenchmarkExample.RunResult result=LIWSABenchmarkExample.runPlanning(
                 dax,Parameters.PlanningAlgorithm.MLEAO,Parameters.SchedulingAlgorithm.STATIC,
                 "MLEAO",seed,pop,gens,null);
         MLEAOPlanningAlgorithm.LastRunMetrics m=MLEAOPlanningAlgorithm.lastRun;
         if(result==null||m==null)throw new IllegalStateException("MLEAO failed");
-        Run r=new Run("MLEAO");r.evals=Math.toIntExact(m.objectiveEvaluations);
-        r.searchMs=m.searchWallClockMillis;append(r,m.paretoFrontPoints,m.paretoFrontAssignments);
+        UnifiedCandidateRecorder.Capture capture=UnifiedCandidateRecorder.end();
+        if(capture.evaluationCount()!=m.objectiveEvaluations)
+            throw new IllegalStateException("MLEAO source-counter and recorder mismatch");
+        Run r=new Run("MLEAO");r.evals=capture.evaluationCount();
+        r.capturedEvaluations=capture.evaluationCount();
+        r.distinctObservedAssignments=capture.distinctAssignments();
+        r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
         return r;
     }
 
@@ -258,11 +289,12 @@ public final class FLAResearchExperiment {
     private static void save(String wf,long seed,int pop,int gens,int cap,Path prefix,
             List<Run> runs,double[] simRef,double[] planRef) throws IOException {
         try(BufferedWriter w=Files.newBufferedWriter(Paths.get(prefix+"_summary.csv"),StandardCharsets.UTF_8)){
-            w.write("workflow,algorithm,seed,population,generations,budget_cap,evaluations,source_archive,distinct_planned_nondominated,replayed,sim_nondominated,sim_hv,planned_hv,sim_ref_m,sim_ref_c,plan_ref_m,plan_ref_c,search_ms\n");
+            w.write("workflow,algorithm,seed,population,generations,budget_cap,evaluations,source_archive,distinct_planned_nondominated,replayed,sim_nondominated,captured_evaluations,distinct_observed,sim_hv,planned_hv,sim_ref_m,sim_ref_c,plan_ref_m,plan_ref_c,search_ms\n");
             for(Run r:runs) {
-                w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%d%n",
+                w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%d%n",
                     wf,r.algorithm,seed,pop,gens,cap,r.evals,r.sourceFrontSize,r.candidates.size(),
-                    r.candidates.size(),r.simulatorFront.size(),r.simHv,r.planHv,
+                    r.candidates.size(),r.simulatorFront.size(),r.capturedEvaluations,
+                    r.distinctObservedAssignments,r.simHv,r.planHv,
                     simRef[0],simRef[1],planRef[0],planRef[1],r.searchMs));
                 System.out.printf(Locale.ROOT,"RESULT %s %s simHV=%.8f planningHV=%.8f simND=%d evals=%d%n",
                     wf,r.algorithm,r.simHv,r.planHv,r.simulatorFront.size(),r.evals);
@@ -290,7 +322,8 @@ public final class FLAResearchExperiment {
             w.write("Replayed sets are selected from each algorithm's PLANNED nondominated records, not every evaluation.\n");
             w.write("FLA-3W combines three independent scalar runs; native optimizers each use one population.\n");
             w.write("Total evaluations are reported, not assumed equal. Warm starts disabled in the pilot.\n");
-            w.write("Archived candidates are not guaranteed to be full search histories for NSGA-II/MLEAO.\n");
+            w.write("UnifiedCandidateRecorder observes EVERY successful evaluation, including seeds and FLA normalization probes.\n");
+            w.write("Planning-nondominated assignments over ALL visited schedules are replayed.\n");
             w.write("This experiment does not establish algorithm fidelity or statistical superiority.\n");
             w.write("Independent planned objectives are re-evaluated with the unified LIWSA decoder for every replay.\n");
         }
