@@ -89,6 +89,28 @@ We also evaluated **five 100-task DAG instances** (CyberShake_100, Epigenomics_1
 
 [100-task simulator replay and frozen HV evidence](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41512322414).
 
+## Completed 100-task evaluation (all five seeds — authoritative aggregate)
+
+The two preliminary runs (seeds 1–2 and seeds 3–5) were combined after checking that the four core algorithm and evaluator source blobs had identical SHA values between commits. A single reference point per 100-task DAG was recomputed across all 5 seeds and all four algorithms. **This table supersedes the preliminary two-seed 100-task percentages above.**
+
+| v6-pop compared with | Mean within-workflow paired simulator-HV change across 25 runs | v6 wins | Exploratory workflow-and-seed bootstrap 95% interval |
+|---|---:|---:|---:|
+| NSGA-II | **−0.433%** | **12/25** | **[−3.729%, +2.583%]** |
+| FLA-3W | **−2.877%** | **12/25** | **[−12.874%, +6.159%]** |
+| reconstructed MLEAO | **+34.120%** | **23/25** | **[+13.291%, +55.334%]** |
+
+Representative family effects versus NSGA-II: CyberShake_100 +0.423%; Epigenomics_100 +1.275%; Inspiral_100 +3.144%; Montage_100 −3.022%; Sipht_100 −3.987%.
+
+Counterexamples versus FLA-3W are stronger at 100 tasks: Montage_100 **−21.237%** mean paired HV (0/5 wins), Inspiral_100 −4.670%, Sipht_100 −1.586%. CyberShake_100 favors v6 by +11.668%.
+
+All 25 original five-seed cases had their solver objective counts checked, candidate assignments replayed through the actual WorkflowSim simulator, and the final HV recalculated from those observed objectives.
+
+- [Final five-seed 100-task results and reproducible frozen-HV CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41514085317)
+- [First 100-task cohort (seeds 1–2)](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41512322414)
+- [Additional 100-task cohort (seeds 3–5)](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41513299770)
+
+**Interpretation:** v6 has credible search-efficiency improvements and often improves upon FLA-3W at small/medium DAG sizes, but the 100-task evidence does not support stable superiority over FLA-3W or NSGA-II. These family effects, including negative ones, must be reported explicitly.
+
 ## Search efficiency and end-to-end deliverable
 
 From the same 25 matched 30x100 runs:
@@ -128,9 +150,9 @@ The output contains a summary CSV, a full set of simulator-replayed candidate as
 1. NSGA-II is currently **statistically unresolved** relative to v6; do not describe v6 as consistently superior.
 2. The original continuous FLA source/parameter fidelity still requires independently verifiable equation-to-code documentation. It is not scientifically sound to call the discrete FLA implementation a faithful original baseline.
 3. The MLEAO baseline is a reconstruction, not a source-faithful implementation. Do not advertise it otherwise.
-4. We have tested 25–30, 46–60, and 100 task scales, but the largest scale has only 2 seeds per DAG. Expand independent seeds, pricing regimes, VM heterogeneity, and workload families. Preserve development/held-out distinction after tuning.
+4. We have tested 25–30, 46–60, and 100 task scales, including **five paired seeds** per 100-task DAG. Still expand independent seeds, pricing regimes, VM heterogeneity, and workload families. Preserve development/held-out distinction after tuning.
 5. Add a pre-registered reference point, IGD+ or epsilon indicator when justified, cost/makespan front visualization, runtime overhead, and stronger statistical power (more independent seeds/workloads).
 6. Candidate screening by planned nondominance may lose assignments that become non-dominated **after** simulation; quantify this approximation or replay every distinct candidate on selected small tests.
 7. This repository branch is not verified byte-for-byte identical to the user's local Windows source tree.
 
-**Conservative current claim:** V6 novelty repair improves FLA search efficiency. It achieves positive simulated-HV gains against FLA-3W on 25–60 task workloads and is broadly competitive with NSGA-II at 25–100 tasks, but cannot claim superiority. At 100 tasks it loses to FLA-3W on some families; reconstructed MLEAO is an imperfect baseline. No journal acceptance/publishability is guaranteed.
+**Conservative current claim:** V6 novelty repair improves FLA search efficiency and is broadly competitive with NSGA-II at 25–100 tasks, without establishing superiority. It improves simulated HV against FLA-3W on 25–60 task workloads, but this advantage does not generalize to all five 100-task workflows; reconstructed MLEAO is an imperfect baseline. No journal acceptance/publishability is guaranteed.
