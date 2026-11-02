@@ -39,6 +39,7 @@ public final class FLAResearchExperiment {
         final double[] planned;
         final Map<Integer,Integer> assignment;
         double[] simulated;
+        double[] independentPlanned;
         Candidate(double[] point, Map<Integer,Integer> mapping) {
             planned = point.clone();
             assignment = Collections.unmodifiableMap(new TreeMap<>(mapping));
@@ -97,7 +98,11 @@ public final class FLAResearchExperiment {
                     throw new IllegalStateException("Invalid exact-assignment replay: " + run.algorithm);
                 }
                 c.simulated = new double[]{result.makespan, result.cost};
+                LIWSAPlanningAlgorithm.LastRunMetrics rmetrics = LIWSAPlanningAlgorithm.lastRun;
+                if(rmetrics == null) throw new IllegalStateException("Replay planner did not publish objectives");
+                c.independentPlanned = new double[]{rmetrics.chosenMakespan, rmetrics.chosenCost};
                 valid(c.simulated);
+                valid(c.independentPlanned);
             }
             List<double[]> actual = new ArrayList<>();
             for (Candidate c : front) actual.add(c.simulated);
@@ -125,8 +130,11 @@ public final class FLAResearchExperiment {
     private static Run runScalar(String dax, long seed, int pop, int gens) {
         Run run = new Run("FLA-3W");
         final double[] weights = {0.2,0.5,0.8};
-        int[] distributed = {gens/3,gens/3,gens/3};
-        for (int i = 0; i < gens % 3; i++) distributed[i]++;
+        final int referenceBudget = pop * (gens + 1);
+        // Includes three initial populations and six scale-normalization probes.
+        final int scalarGenerations = Math.max(3, (referenceBudget - 6) / pop - 3);
+        int[] distributed = {scalarGenerations/3,scalarGenerations/3,scalarGenerations/3};
+        for (int i = 0; i < scalarGenerations % 3; i++) distributed[i]++;
         for (int i = 0; i < weights.length; i++) {
             FLABaselinePlanningAlgorithm.CONFIG_COLLECT_ARCHIVE = true;
             FLABaselinePlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
@@ -253,7 +261,7 @@ public final class FLAResearchExperiment {
             }
         }
         try(BufferedWriter w=Files.newBufferedWriter(Paths.get(prefix+"_replays.csv"),StandardCharsets.UTF_8)){
-            w.write("workflow,algorithm,seed,candidate_index,planned_makespan,planned_cost,sim_makespan,sim_cost,mapping\n");
+            w.write("workflow,algorithm,seed,candidate_index,planned_makespan,planned_cost,independent_planned_makespan,independent_planned_cost,sim_makespan,sim_cost,mapping\n");
             for(Run r:runs){
                 int i=0;
                 for(Candidate c:r.candidates){
@@ -262,8 +270,9 @@ public final class FLAResearchExperiment {
                         if(sb.length()>0)sb.append('|');
                         sb.append(p.getKey()).append(':').append(p.getValue());
                     }
-                    w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%.10f,%.10f,%.10f,%.10f,%s%n",
+                    w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%s%n",
                         wf,r.algorithm,seed,++i,c.planned[0],c.planned[1],
+                        c.independentPlanned[0],c.independentPlanned[1],
                         c.simulated[0],c.simulated[1],sb.toString()));
                 }
             }
@@ -275,6 +284,7 @@ public final class FLAResearchExperiment {
             w.write("Total evaluations are reported, not assumed equal. Warm starts disabled in the pilot.\n");
             w.write("Archived candidates are not guaranteed to be full search histories for NSGA-II/MLEAO.\n");
             w.write("This experiment does not establish algorithm fidelity or statistical superiority.\n");
+            w.write("Independent planned objectives are re-evaluated with the unified LIWSA decoder for every replay.\n");
         }
     }
 }
