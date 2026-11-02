@@ -1,0 +1,45 @@
+name: DAG-Pareto-FLA v6 standalone deliverable smoke
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v6-deliverable-smoke.yml', 'examples/org/workflowsim/examples/planning/DAGParetoFLAV6Example.java']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  delivery-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile every source from scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs
+          git rev-parse HEAD | tee ci-logs/sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/files.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/files.txt 2>&1 | tee ci-logs/compile.log
+      - name: Run explicitly selected v6 algorithm end to end
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.DAGParetoFLAV6Example \
+            Montage_25 1 12 12 2>&1 | tee ci-logs/v6-montage.log
+          grep -q '^V6_SUCCESS workflow=Montage_25 seed=1 population=12 generations=12 evaluations=156 ' ci-logs/v6-montage.log
+          echo 'SUCCESS: standalone v6 algorithm planned, committed and simulated'
+      - name: Save executable demonstration logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6-standalone-smoke-${{ github.run_id }}
+          path: ci-logs/
+          retention-days: 60
