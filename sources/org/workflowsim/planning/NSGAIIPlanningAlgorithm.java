@@ -516,6 +516,7 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     private double[] decFinish;
     private int[] decAssigned;
     private UnifiedScheduleEvaluator unifiedScheduleEvaluator;
+    private StageInAwareScheduleEvaluator stageInAwareEvaluator;
     /** Number of objective evaluations (genotype decodes) performed in this run. */
     protected long evaluationCount = 0;
 
@@ -557,6 +558,8 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
         unifiedScheduleEvaluator = new UnifiedScheduleEvaluator(
                 decParentIdx, decParentTransfer, decDuration, decVmPrice,
                 decEvStart, decEvFinish, decEvCount, decFinish, decAssigned);
+        stageInAwareEvaluator = Boolean.getBoolean("workflowsim.planningStageInAware")
+                ? new StageInAwareScheduleEvaluator(taskOrder, vmList) : null;
     }
 
     
@@ -567,6 +570,11 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     protected double[] decode(int[] genotype) {
         evaluationCount++;
         double[] objectives = unifiedScheduleEvaluator.evaluate(genotype);
+        if(stageInAwareEvaluator!=null) {
+            StageInAwareScheduleEvaluator.Result corrected =
+                    stageInAwareEvaluator.evaluate(toAssignment(genotype));
+            objectives=new double[]{corrected.makespan,corrected.cost};
+        }
         UnifiedCandidateRecorder.record(taskOrder, vmList, genotype, objectives[0], objectives[1]);
         return objectives;
     }

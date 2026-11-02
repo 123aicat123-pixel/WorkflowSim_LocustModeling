@@ -78,6 +78,8 @@ public final class FLAScheduleEvaluator {
     private final double[] currentStarts;
 
     private long objectiveEvaluations;
+    private final StageInAwareScheduleEvaluator stageInAwareEvaluator;
+    /** Optional model parity switch: -Dworkflowsim.planningStageInAware=true */
 
     /** Defaults to validated earliest insertion and no extra PE rejection.
      * Use REPOSITORY_COMPATIBLE explicitly for a controlled parity audit. */
@@ -123,6 +125,8 @@ public final class FLAScheduleEvaluator {
         this.currentStarts = new double[n];
 
         prepareDecoder();
+        stageInAwareEvaluator = Boolean.getBoolean("workflowsim.planningStageInAware")
+                ? new StageInAwareScheduleEvaluator(taskOrder,vmList) : null;
     }
 
     public List<Task> getTaskOrder() { return taskOrder; }
@@ -323,6 +327,8 @@ public final class FLAScheduleEvaluator {
     }
 
     public ScheduleTrace evaluateWithTrace(int[] g) {
+        if(stageInAwareEvaluator!=null)
+            throw new IllegalStateException("Legacy interval trace is not valid for stage-in-aware objectives");
         double[] mc = decode(g);
         return new ScheduleTrace(mc[0],mc[1],currentStarts,taskFinish,g);
     }
@@ -350,6 +356,12 @@ public final class FLAScheduleEvaluator {
             currentStarts[k]=fin-d;
             cost+=d*vmPrice[v];
             makespan=Math.max(makespan,fin);
+        }
+        if(stageInAwareEvaluator!=null) {
+            StageInAwareScheduleEvaluator.Result corrected =
+                    stageInAwareEvaluator.evaluate(toAssignment(g));
+            makespan=corrected.makespan;
+            cost=corrected.cost;
         }
         UnifiedCandidateRecorder.record(taskOrder, vmList, g, makespan, cost);
         return new double[]{makespan,cost};
