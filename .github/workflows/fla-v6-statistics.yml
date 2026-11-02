@@ -1,0 +1,105 @@
+name: FLA v6 statistical validation on immutable 25-pair results
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v6-statistics.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  paired-inference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41511138304
+          github-token: ${{ github.token }}
+          pattern: v6-confirm-frozen-hv-summary-41511138304
+          path: frozen-data
+          merge-multiple: true
+      - name: Compute descriptive paired effects and exploratory uncertainty
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,collections,pathlib,statistics,random,math
+          ps=list(pathlib.Path('frozen-data').rglob('v6_frozen_hv.csv'))
+          assert len(ps)==1,ps
+          with ps[0].open(newline='') as f:rows=list(csv.DictReader(f))
+          assert len(rows)==100,len(rows)
+          values={}
+          for row in rows:
+              key=(row['workflow'],row['algorithm'],int(row['seed']))
+              assert key not in values,key
+              values[key]=float(row['sim_hv'])
+          workflows=sorted({w for w,_,_ in values})
+          assert len(workflows)==5
+          for w in workflows:
+              assert {s for a in ('DAG-Pareto-FLA[v6-pop]','NSGA-II','FLA-3W','MLEAO')
+                          for s in range(1,6) if (w,a,s) in values}==set(range(1,6))
+          report=[
+              '# FLA v6: paired-sample statistical evidence and limitations',
+              '',
+              'Immutable source run: https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41511138304',
+              '5 DAG families x 5 paired seeds x 4 algorithms, ~3000 objective evaluations per solver.',
+              'The HV reference is locked per DAG family across all solvers and seeds.',
+              'We compare WITHIN workflow paired relative HV, never raw HV across workflow families.',
+              'Statistical tests are exploratory: seeds within the same DAG are not independent workflow replicates.',
+              'Only planned-nondominated visited schedules are replayed in the simulator.',
+              '',
+              '| v6 compared with | Mean paired HV % | Median paired HV % | Better pairs | Exact sign-test p (exploratory) | Cluster-and-seed bootstrap 95% interval % |',
+              '|---|---:|---:|---:|---:|---:|']
+          raw=[]
+          def twosided_sign(wins,losses):
+              n=wins+losses
+              k=min(wins,losses)
+              return min(1.0,2*sum(math.comb(n,i) for i in range(k+1))/2**n) if n else 1.0
+          for comp in ('NSGA-II','FLA-3W','MLEAO'):
+              family={}
+              for w in workflows:
+                  family[w]=[100*(values[(w,'DAG-Pareto-FLA[v6-pop]',seed)]
+                      /values[(w,comp,seed)]-1) for seed in range(1,6)]
+                  for seed,diff in enumerate(family[w],1):
+                      raw.append(dict(workflow=w,seed=seed,comparison=comp,paired_relative_hv_pct=diff))
+              allvals=[p for w in workflows for p in family[w]]
+              wins=sum(x>0 for x in allvals);losses=sum(x<0 for x in allvals)
+              rng=random.Random(20261103)
+              bootstrap=[]
+              for _ in range(10000):
+                  sampled_families=[rng.choice(workflows) for _ in workflows]
+                  z=[rng.choice(family[w]) for w in sampled_families for __ in range(5)]
+                  bootstrap.append(statistics.mean(z))
+              bootstrap.sort()
+              lo=bootstrap[249];hi=bootstrap[9749]
+              report.append(f'| {comp} | {statistics.mean(allvals):+.3f} | {statistics.median(allvals):+.3f} | {wins}/{wins+losses} | {twosided_sign(wins,losses):.5f} | [{lo:+.3f}, {hi:+.3f}] |')
+              report+=['',f'### v6 versus {comp} (workflow-level paired effects)']
+              for w in workflows:
+                  report.append(f'- {w}: {statistics.mean(family[w]):+.3f}% mean, {sum(x>0 for x in family[w])}/5 better')
+          report+=['',
+            '## Interpretation boundary',
+            '1. The cluster bootstrap resamples five DAG families and seeds within them; with only five families, uncertainty may be large.',
+            '2. Sign tests treat 25 seed-level comparisons as exchangeable for an EXPLORATORY diagnostic, not a definitive publication p-value.',
+            '3. Solver quality is estimated only from candidate schedules surviving PLANNING nondominance and simulator replay.',
+            '4. FLA-3W is a scalarized MATLAB-adapted portfolio; MLEAO is a reconstructed implementation.',
+            '5. If the bootstrap interval crosses zero or victories are split, do not claim stable superiority.',
+          ]
+          pathlib.Path('reports/paired_statistical_report.md').write_text('\n'.join(report)+'\n',encoding='utf-8')
+          with pathlib.Path('reports/paired_relative_hv.csv').open('w',newline='') as f:
+              writer=csv.DictWriter(f,fieldnames=list(raw[0]))
+              writer.writeheader();writer.writerows(raw)
+          print('\n'.join(report))
+          PY
+          cat reports/paired_statistical_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve statistical analysis
+        uses: actions/upload-artifact@v4
+        with:
+          name: v6-paired-statistics-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
