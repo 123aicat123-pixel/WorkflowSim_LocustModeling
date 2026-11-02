@@ -1,0 +1,128 @@
+name: Reference-point robustness audit of five-seed 100-task simulator HV
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-hv-reference-robustness.yml']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  reference-robustness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the same immutable 100-task seed 1 and 2 evidence
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41512322414
+          github-token: ${{ github.token }}
+          pattern: v6-100-*
+          path: input/first
+          merge-multiple: false
+      - name: Read identical-source 100-task seed 3 to 5 evidence
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41513299770
+          github-token: ${{ github.token }}
+          pattern: v6-100ext-*
+          path: input/second
+          merge-multiple: false
+      - name: Check reference sensitivity at several fixed scales
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,math,statistics,collections
+          a=list(pathlib.Path('input/first').rglob('*_replays.csv'))
+          b=list(pathlib.Path('input/second').rglob('*_replays.csv'))
+          assert len(a)==10 and len(b)==15, (len(a),len(b))
+          records=collections.defaultdict(list)
+          workflows={'CyberShake_100','Epigenomics_100','Inspiral_100','Montage_100','Sipht_100'}
+          algs=('DAG-Pareto-FLA[v6-pop]','NSGA-II','FLA-3W','MLEAO')
+          for p in a+b:
+              with p.open(newline='') as f:
+                  rows=list(csv.DictReader(f))
+              assert rows,p
+              for r in rows:
+                  key=(r['workflow'],r['algorithm'],int(r['seed']))
+                  m,c=float(r['sim_makespan']),float(r['sim_cost'])
+                  assert r['workflow'] in workflows and r['algorithm'] in algs
+                  assert 1<=int(r['seed'])<=5
+                  assert math.isfinite(m) and math.isfinite(c) and m>0 and c>0
+                  records[key].append((m,c))
+          assert len(records)==100
+          worst={}
+          for wf in workflows:
+              points=[p for (w,a,s),pts in records.items() if w==wf for p in pts]
+              worst[wf]=(max(p[0] for p in points),max(p[1] for p in points))
+          def nd(points):
+              p=sorted(set(points))
+              return [x for x in p if not any(y!=x and y[0]<=x[0] and y[1]<=x[1] for y in p)]
+          def hv(points,ref):
+              vals=nd(points);prev=ref[1];total=0
+              for m,c in vals:
+                  if c<prev and m<ref[0]:
+                      total+=(ref[0]-m)*(prev-c)
+                      prev=c
+              return total
+          scales=(1.02,1.05,1.10,1.20,1.50)
+          byscale={}
+          for scale in scales:
+              vals={}
+              for key,points in records.items():
+                  w=worst[key[0]]
+                  ref=(w[0]*scale+1,w[1]*scale+1)
+                  vals[key]=hv(points,ref)
+              byscale[scale]=vals
+          report=['# 100-task simulator HV reference point robustness check',
+                  '',
+                  'The original candidate assignment replays and all seed/algorithm data are unchanged.',
+                  'Each reference is scale × the worst observed makespan and cost across all algorithms and seeds of the SAME DAG family, plus 1.',
+                  'This is a post-hoc sensitivity audit. It does not replace a pre-registered external reference point.',
+                  '',
+                  '| Reference multiplier | v6 vs NSGA-II mean paired % | v6 wins / 25 | v6 vs FLA-3W mean paired % | v6 wins / 25 | Different winner cases vs multiplier 1.05 |',
+                  '|---|---:|---:|---:|---:|---:|']
+          baseline={}
+          for wf in workflows:
+              for seed in range(1,6):
+                  base=byscale[1.05]
+                  baseline[(wf,seed)]=max(algs,key=lambda a:base[(wf,a,seed)])
+          raw=[]
+          for scale in scales:
+              vals=byscale[scale]
+              diffs={}
+              wins={}
+              for other in algs[1:3]:
+                  d=[100*(vals[(wf,algs[0],seed)]/max(1e-9,vals[(wf,other,seed)])-1)
+                     for wf in sorted(workflows) for seed in range(1,6)]
+                  diffs[other]=statistics.mean(d)
+                  wins[other]=sum(x>0 for x in d)
+              changed=0
+              for wf in workflows:
+                  for seed in range(1,6):
+                      winner=max(algs,key=lambda x:vals[(wf,x,seed)])
+                      if winner!=baseline[(wf,seed)]:changed+=1
+                      for a in algs:
+                          raw.append(dict(scale=scale,workflow=wf,seed=seed,algorithm=a,
+                                          ref_m=worst[wf][0]*scale+1,
+                                          ref_c=worst[wf][1]*scale+1,
+                                          sim_hv=vals[(wf,a,seed)]))
+              report.append(f'| {scale:.2f} | {diffs["NSGA-II"]:+.3f}% | {wins["NSGA-II"]}/25 | {diffs["FLA-3W"]:+.3f}% | {wins["FLA-3W"]}/25 | {changed}/25 |')
+          with pathlib.Path('reports/reference_robustness.csv').open('w',newline='') as f:
+              writer=csv.DictWriter(f,fieldnames=list(raw[0]))
+              writer.writeheader();writer.writerows(raw)
+          pathlib.Path('reports/reference_robustness.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/reference_robustness.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v6-reference-robustness-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
