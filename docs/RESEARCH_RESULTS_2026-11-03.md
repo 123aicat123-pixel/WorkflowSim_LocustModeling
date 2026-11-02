@@ -263,3 +263,18 @@ java -Dworkflowsim.planningStageInAware=true \
 4. **完成版本封存和文件对账。** GitHub `fla-baseline` 为可独立编译运行的研发分支；未证明与用户的 Windows 本地目录完全一致。保留 repo SHA、Actions run ID、原始 CSV 和 Java 17 依赖，建议新建不可变研究 release/tag 以减少 artifact 过期带来的复现风险。
 
 **研究质量评价：** 目前可以作为一个严肃科研原型继续写实验方法与模型设计，但尚不能按“一篇新算法显著超越经典算法、可直接投稿一区”的标准下结论。
+
+## 14. 搜索多样性描述性诊断
+
+[从不可变 25 组 FLA-v3 实验产物提取的独立诊断](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41510243021)。
+
+| Solver | Mean distinct VM assignments / evaluated % | Mean planned-ND archive members | Mean simulated-ND archive members |
+|---|---:|---:|---:|
+| DAG-Pareto-FLA[v3-archive] | 48.240% | 14.84 | 10.76 |
+| FLA-3W | 60.225% | 30.56 | 24.52 |
+| NSGA-II | **88.283%** | 26.92 | 18.84 |
+| MLEAO reconstructed | 81.746% | 13.64 | 10.16 |
+
+同样约 3000 次目标函数评价，DAG-FLA v3 搜索中独特的 VM 分配比例远低于 NSGA-II，**提示可能存在过早收敛或重复评估**。但本表为描述性现象，不是已经完成控制变量的因果证明；重复解可能取决于算子、搜索空间规模和精英选择。若把此作为后续创新点，需要固定评价预算并针对重复评价、种群多样性和性能提升做单因素消融，而不是单纯在论文中推测“多样性导致差距”。
+
+以上数据按各自实际观察到的解集报告，不等同于全集 Pareto front。
