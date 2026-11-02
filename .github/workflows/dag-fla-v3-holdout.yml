@@ -1,0 +1,146 @@
+name: DAG-FLA v3 archive recombination held-out confirmation
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/dag-fla-v3-holdout.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  holdout:
+    name: Held-out ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_24, Inspiral_30]
+        seed: [1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and capture revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/head.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Two independent 3030-evaluation searches with exact simulator replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in v2-global v3-archive; do
+            java -Dworkflowsim.planningStageInAware=true -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+              "Output&Results/holdoutv3_${{ matrix.workflow }}_s${{ matrix.seed }}_${variant}" "${variant}" \
+              2>&1 | tee "ci-logs/${variant}.log"
+          done
+          python3 - <<'PY'
+          import pathlib,csv,math
+          files=list(pathlib.Path('Output&Results').glob('holdoutv3_*_summary.csv'))
+          assert len(files)==2,len(files)
+          for path in files:
+              with path.open(newline='') as f:r=list(csv.DictReader(f))
+              assert len(r)==1
+              assert int(r[0]['evaluations'])==3030 and int(r[0]['captured_evaluations'])==3030
+              assert int(r[0]['replayed'])>0
+          print('PASS two paired searches, independent replay, identical evaluation budgets')
+          PY
+      - name: Preserve holdout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dagv3-holdout-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/holdoutv3_*_summary.csv
+            Output&Results/holdoutv3_*_replays.csv
+          if-no-files-found: warn
+          retention-days: 45
+
+  analyze-holdout:
+    name: Frozen HV held-out two-DAG, five-seed paired test
+    needs: [holdout]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dagv3-holdout-*-${{ github.run_id }}
+          path: inputs
+          merge-multiple: false
+      - name: Compare v2-global against v2-global under paired seeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,pathlib,collections,statistics
+          files=list(pathlib.Path('inputs').rglob('holdoutv3_*_replays.csv'))
+          assert len(files)==20,len(files)
+          g=collections.defaultdict(list)
+          for path in files:
+              with path.open(newline='') as f:rows=list(csv.DictReader(f))
+              assert rows
+              for r in rows:
+                  g[(r['workflow'],r['algorithm'],int(r['seed']))].append(
+                     (float(r['sim_makespan']),float(r['sim_cost'])))
+          a='DAG-Pareto-FLA[v2-global]';b='DAG-Pareto-FLA[v3-archive]'
+          workflows=('Epigenomics_24','Inspiral_30')
+          assert len(g)==20
+          refs={}
+          for wf in workflows:
+              pts=[p for (w,_,_),arr in g.items() if w==wf for p in arr]
+              refs[wf]=(1.05*max(x for x,_ in pts)+1,1.05*max(y for _,y in pts)+1)
+          def nd(xs):
+              u=sorted(set(xs))
+              return [x for x in u if not any(z!=x and z[0]<=x[0] and z[1]<=x[1] for z in u)]
+          def hv(pts,ref):
+              score=0;prev=ref[1]
+              for m,c in nd(pts):
+                  if c<prev: score+=(ref[0]-m)*(prev-c);prev=c
+              return score
+          table=['# Held-out DAG-FLA v3 archive recombination confirmation','',
+                 '2 held-out workflows, 5 paired seeds, pop30, gen100, 3030 evaluations per solver.',
+                 'The v3-archive variant was PRESELECTED by mean paired HV among v3 variants on three development families; Epigenomics and Inspiral are reserved as held-out tests.',
+                 'One frozen simulated-HV reference per workflow across both variants and seeds.',
+                 'Candidate replay is restricted to planned-nondominated assignments; this is NOT an exhaustive simulator front.',
+                 '',
+                 '| Workflow | v2-global mean HV | v3-archive mean HV | Mean paired improvement | Better seeds |',
+                 '|---|---:|---:|---:|---:|']
+          all_diff=[]
+          for wf in workflows:
+              before=[hv(g[(wf,a,s)],refs[wf]) for s in range(1,6)]
+              after=[hv(g[(wf,b,s)],refs[wf]) for s in range(1,6)]
+              diff=[100*(v/max(1e-12,u)-1) for u,v in zip(before,after)]
+              all_diff.extend(diff)
+              table.append(f'| {wf} | {statistics.mean(before):.5f} | {statistics.mean(after):.5f} | {statistics.mean(diff):+.3f}% | {sum(v>u for u,v in zip(before,after))}/5 |')
+          table+=['',f'- Across all 10 held-out pairs: mean paired change {statistics.mean(all_diff):+.3f}%; better on {sum(x>0 for x in all_diff)}/10.',
+                  '- This tests an operator improvement versus v2-global DAG-FLA, NOT superiority versus NSGA-II or original continuous FLA.',
+                  '- No statistical claim is made from only five seeds per workflow.']
+          pathlib.Path('reports/dag_v3_holdout_report.md').write_text('\n'.join(table)+'\n')
+          with pathlib.Path('reports/dag_v3_holdout_scores.csv').open('w',newline='') as f:
+              w=csv.writer(f);w.writerow(['workflow','algorithm','seed','sim_hv','ref_m','ref_c'])
+              for (wf,alg,seed),arr in sorted(g.items()):
+                  w.writerow([wf,alg,seed,f'{hv(arr,refs[wf]):.10f}',
+                              f'{refs[wf][0]:.10f}',f'{refs[wf][1]:.10f}'])
+          print('\n'.join(table))
+          PY
+          cat reports/dag_v3_holdout_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save holdout report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dagv3-holdout-aggregate-${{ github.run_id }}
+          path: reports/
+          retention-days: 45
+          if-no-files-found: warn
