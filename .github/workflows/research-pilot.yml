@@ -1,0 +1,145 @@
+name: WorkflowSim research pilot (pre-FLA baselines)
+
+on:
+  push:
+    branches: [fla-baseline]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  research-pilot:
+    name: Three-DAG baseline and decoder-fidelity pilot
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Compile actual Java sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs "Output&Results"
+          git rev-parse HEAD | tee ci-logs/commit-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/source-files.txt
+          echo "Java files: $(wc -l < ci-logs/source-files.txt)"
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/source-files.txt 2>&1 | tee ci-logs/compile-pilot.log
+
+      - name: Run deterministic decoder regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.DecoderInsertionRegressionTest 2>&1 | tee ci-logs/regression.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.UnifiedEvaluatorPropertiesTest 2>&1 | tee ci-logs/oracle.log
+
+      - name: Run five-seed baseline comparison (three DAG families)
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.LIWSABenchmarkExample \
+            'Montage_25,CyberShake_30,Sipht_30' \
+            'Output&Results/pilot_baselines.csv' 2>&1 | tee ci-logs/baselines.log
+          test -s 'Output&Results/pilot_baselines.csv'
+
+      - name: Measure planning versus WorkflowSim fidelity (three seeds)
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.DecoderFidelityCheck \
+            'Montage_25,CyberShake_30,Sipht_30' '1,2,3' \
+            'Output&Results/pilot_fidelity.csv' 2>&1 | tee ci-logs/fidelity.log
+          test -s 'Output&Results/pilot_fidelity.csv'
+
+      - name: Check coverage and create empirical report
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv, math, pathlib, statistics
+          root = pathlib.Path('Output&Results')
+          wfs = {'Montage_25', 'CyberShake_30', 'Sipht_30'}
+          algorithms = {'HEFT', 'Min-Min', 'MLEAO', 'LIWSA', 'LIWSA-ML', 'NSGA-II'}
+          with (root/'pilot_baselines.csv').open(newline='') as f:
+              baseline = list(csv.DictReader(f))
+          expected = {(w, a, 0 if a in {'HEFT','Min-Min'} else s)
+                      for w in wfs for a in algorithms
+                      for s in ([0] if a in {'HEFT','Min-Min'} else range(1,6))}
+          seen = {(r['workflow'],r['algorithm'],int(r['seed'])) for r in baseline}
+          assert seen == expected and len(baseline) == len(expected), (
+              f'Baseline coverage mismatch: {len(baseline)} rows, missing={expected-seen}, extra={seen-expected}')
+          for r in baseline:
+              for key in ('makespan','cost','hypervolume'):
+                  v = float(r[key])
+                  assert math.isfinite(v) and v >= 0, (r['workflow'],r['algorithm'],key,v)
+              assert float(r['makespan']) > 0 and float(r['cost']) > 0
+          with (root/'pilot_fidelity.csv').open(newline='') as f:
+              fidelity = list(csv.DictReader(f))
+          expected_fid = {(w,a,0 if a.endswith('-schedule') else s)
+                          for w in wfs
+                          for a in ('HEFT-schedule','MinMin-schedule','LIWSA-chosen','NSGA-II-chosen')
+                          for s in ([0] if a.endswith('-schedule') else range(1,4))}
+          seen_fid = {(r['workflow'],r['run'],int(r['seed'])) for r in fidelity}
+          assert seen_fid == expected_fid and len(fidelity) == len(expected_fid), (
+              f'Fidelity coverage mismatch: {len(fidelity)} rows; missing={expected_fid-seen_fid}')
+          for r in fidelity:
+              for key in ('planned_makespan','sim_makespan','planned_cost','sim_cost'):
+                  v = float(r[key])
+                  assert math.isfinite(v) and v > 0, (r['workflow'],r['run'],key,v)
+          out = [
+              '# WorkflowSim pilot — measurements only',
+              '',
+              'This is a pre-FLA infrastructure test, **not** a validated FLA comparison.',
+              'Pareto HV uses **planning-level** fronts; makespan/cost are simulator measurements.',
+              'The reference point is recalculated per workflow; between-workflow absolute HV is not comparable.',
+              'Algorithms do not necessarily have identical evaluation/time budgets.',
+              'MLEAO is a reconstruction and LIWSA is the source-project method.',
+              '',
+              f'- Baseline rows: {len(baseline)} (expected 66)',
+              f'- Fidelity rows: {len(fidelity)} (expected 24)',
+              '',
+              '| Workflow | Algorithm | Mean simulator makespan | Mean simulator cost | Mean planning HV |',
+              '|---|---|---:|---:|---:|'
+          ]
+          for w in sorted(wfs):
+              for a in sorted(algorithms):
+                  rr = [r for r in baseline if r['workflow']==w and r['algorithm']==a]
+                  mean = lambda k: statistics.mean(float(x[k]) for x in rr)
+                  out.append(f'| {w} | {a} | {mean("makespan"):.4f} | {mean("cost"):.4f} | {mean("hypervolume"):.4f} |')
+          out.extend(['','## Decoder-to-simulator absolute relative error (%, median)','',
+                      '| Workflow | Algorithm | Makespan error | Cost error |',
+                      '|---|---|---:|---:|'])
+          for w in sorted(wfs):
+              for a in ('HEFT-schedule','MinMin-schedule','LIWSA-chosen','NSGA-II-chosen'):
+                  rr = [r for r in fidelity if r['workflow']==w and r['run']==a]
+                  mk = statistics.median(abs((float(r['sim_makespan'])-float(r['planned_makespan'])) /
+                                               float(r['planned_makespan'])*100) for r in rr)
+                  cost = statistics.median(abs((float(r['sim_cost'])-float(r['planned_cost'])) /
+                                                 float(r['planned_cost'])*100) for r in rr)
+                  out.append(f'| {w} | {a} | {mk:.3f} | {cost:.3f} |')
+          (root/'pilot_report.md').write_text('\n'.join(out)+'\n', encoding='utf-8')
+          print('\n'.join(out))
+          PY
+          cat 'Output&Results/pilot_report.md' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload experiment data and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-pilot-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/pilot_baselines.csv
+            Output&Results/pilot_baselines_summary.*
+            Output&Results/pilot_fidelity.csv
+            Output&Results/pilot_fidelity_summary.*
+            Output&Results/pilot_report.md
+          if-no-files-found: warn
+          retention-days: 30
