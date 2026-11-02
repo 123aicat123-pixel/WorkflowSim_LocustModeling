@@ -41,6 +41,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_ADAPTIVE_PREFERENCE = true;
     public static boolean CONFIG_GLOBAL_SURVIVOR_SELECTION = false;
     public static boolean CONFIG_RANDOM_IMMIGRANTS = false;
+    // Experimental v3 operators: only affect the DAG-Pareto-FLA planner.
+    public static boolean CONFIG_RESOURCE_AWARE_MUTATION = false;
+    public static boolean CONFIG_ARCHIVE_RECOMBINATION = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -101,6 +104,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean enforcePes;
     private final boolean useDag, useCross, useArchiveSso, useAdaptiveMutation, useAdaptivePreference;
     private final boolean useGlobalSelection, useImmigrants;
+    private final boolean useResourceAwareMutation, useArchiveRecombination;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -111,6 +115,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private List<CondorVM> vmList;
     private int[][] allowed;
     private double[] importance;
+    private double[][] optimisticServiceSeconds;
     private int n, group1Size;
     private List<Solution> group1, group2;
     private double alpha1 = 0.85;
@@ -129,6 +134,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useAdaptivePreference = CONFIG_ADAPTIVE_PREFERENCE;
         useGlobalSelection = CONFIG_GLOBAL_SURVIVOR_SELECTION;
         useImmigrants = CONFIG_RANDOM_IMMIGRANTS;
+        useResourceAwareMutation = CONFIG_RESOURCE_AWARE_MUTATION;
+        useArchiveRecombination = CONFIG_ARCHIVE_RECOMBINATION;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -156,6 +163,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
+        if (useResourceAwareMutation) prepareResourceHeuristic();
         if (!useDag) { Arrays.fill(importance, 1.0); }
         random = seed == null ? new Random() : new Random(seed);
         group1Size = (populationSize + 1) / 2;
@@ -218,7 +226,15 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         double pressure = Math.exp(-(double) rank[i] / Math.max(1, maxRank));
                         guidedGenes(genes, ref.genes, pressure);
                     }
-                    mutate(genes, mutationProbability);
+                    if (useArchiveRecombination && !archive.isEmpty()
+                            && random.nextDouble() < 0.25) {
+                        archiveRecombine(genes);
+                    }
+                    if (useResourceAwareMutation && random.nextDouble() < 0.45) {
+                        resourceAwareMutation(genes, isG1);
+                    } else {
+                        mutate(genes, mutationProbability);
+                    }
                 }
                 Solution child = new Solution(genes, evaluator.evaluate(genes));
                 archiveConsider(child); // ALL visited children, even if not selected
@@ -433,6 +449,93 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         for(int k=0;k<n;k++) {
             double p=clamp(pressure*random.nextDouble()*(0.5+0.5*importance[k]),0,1);
             if(random.nextDouble()<p)child[k]=guide[k];
+        }
+    }
+
+    /**
+     * Conservative cost/latency proxy for a SINGLE gene proposal. The true
+     * target is always evaluated by the shared stage-in-aware evaluator; this
+     * precomputation is only a proposal heuristic, not a second objective.
+     *
+     * Source/intermediate input files use bytes / 1e6 / VM bandwidth, exactly
+     * the unit convention in WorkflowDatacenter (but without replica caching).
+     */
+    private void prepareResourceHeuristic() {
+        optimisticServiceSeconds = new double[n][vmList.size()];
+        for (int k = 0; k < n; k++) {
+            Task task = taskOrder.get(k);
+            double inputMb = 0.0;
+            List<FileItem> files = task.getFileList();
+            for (FileItem f : files) {
+                if (f.getType() == Parameters.FileType.INPUT && f.isRealInputFile(files)) {
+                    inputMb += f.getSize() / Consts.MILLION;
+                }
+            }
+            for (int v : allowed[k]) {
+                CondorVM vm = vmList.get(v);
+                optimisticServiceSeconds[k][v] =
+                        task.getCloudletTotalLength() / vm.getMips() + inputMb / vm.getBw();
+            }
+        }
+    }
+
+    /**
+     * A rank-weighted task is reassigned toward a resource-efficient VM.
+     * Group 1 prioritizes low makespan (estimated current per-VM workload);
+     * group 2 prioritizes low cost. This produces exactly ONE additional
+     * child genotype and does NOT consume any extra objective evaluations.
+     */
+    private void resourceAwareMutation(int[] genes, boolean latencyFocused) {
+        double total = 0;
+        for (double v : importance) total += Math.max(EPS, v);
+        double draw = random.nextDouble() * total;
+        int k = n - 1;
+        for (int t = 0; t < n; t++) {
+            draw -= Math.max(EPS, importance[t]);
+            if (draw <= 0) { k = t; break; }
+        }
+        if (allowed[k].length <= 1) return;
+        double[] load = new double[vmList.size()];
+        for (int t = 0; t < n; t++) {
+            if (t != k) load[genes[t]] += optimisticServiceSeconds[t][genes[t]];
+        }
+        // Rank all ALTERNATIVE VMs; retain stochasticity to avoid collapse
+        // into a single fastest/cheapest VM for every task.
+        int best = -1, second = -1, third = -1;
+        double bestScore = Double.POSITIVE_INFINITY;
+        double secondScore = Double.POSITIVE_INFINITY;
+        double thirdScore = Double.POSITIVE_INFINITY;
+        for (int v : allowed[k]) {
+            if (v == genes[k]) continue;
+            double service = optimisticServiceSeconds[k][v];
+            double score = latencyFocused
+                    ? service + 0.35 * load[v] / Math.max(1.0, n / 4.0)
+                    : service * vmList.get(v).getCost()
+                        + 0.04 * load[v] * vmList.get(v).getCost() / Math.max(1.0, n / 4.0);
+            if (score < bestScore) {
+                third = second; thirdScore = secondScore;
+                second = best; secondScore = bestScore;
+                best = v; bestScore = score;
+            } else if (score < secondScore) {
+                third = second; thirdScore = secondScore;
+                second = v; secondScore = score;
+            } else if (score < thirdScore) {
+                third = v; thirdScore = score;
+            }
+        }
+        double r = random.nextDouble();
+        genes[k] = (r < 0.75 || second < 0) ? best
+                : (r < 0.95 || third < 0) ? second : third;
+    }
+
+    /** A short, contiguous block of VM decisions is copied from one
+     * nondominated archived solution, promoting building-block exchange. */
+    private void archiveRecombine(int[] genes) {
+        Solution guide = archive.get(random.nextInt(archive.size()));
+        int length = Math.min(n, 1 + random.nextInt(Math.max(1, n / 5)));
+        int start = random.nextInt(n - length + 1);
+        for (int k = start; k < start + length; k++) {
+            genes[k] = guide.genes[k];
         }
     }
 
