@@ -1,12 +1,6 @@
 name: DAG-FLA v4 Pareto crowding environmental selection development pilot
 
 on:
-  push:
-    branches: [fla-baseline]
-    paths:
-      - '.github/workflows/dag-fla-v4-pilot.yml'
-      - 'sources/org/workflowsim/planning/DAGParetoFLAPlanningAlgorithm.java'
-      - 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java'
   workflow_dispatch:
 
 permissions:
