@@ -70,6 +70,7 @@ public final class FLAResearchExperiment {
         final List<String> auditStrata = new ArrayList<>();
         int dominatedPool;
         int tiedPool;
+        int auditUniqueVisited;
         int newSimulatorNondominated;
         double auditHvGain;
         double simHv;
@@ -168,6 +169,7 @@ public final class FLAResearchExperiment {
 
     private static Run runScalar(String dax, long seed, int pop, int gens) {
         Run run = new Run("FLA-3W");
+        final Set<Map<Integer,Integer>> globalUniqueAssignments = new HashSet<>();
         final double[] weights = {0.2,0.5,0.8};
         final int referenceBudget = pop * (gens + 1);
         // Includes three initial populations and six scale-normalization probes.
@@ -193,7 +195,9 @@ public final class FLAResearchExperiment {
                 throw new IllegalStateException("FLA source-counter and recorder mismatch");
             run.evals += capture.evaluationCount();
             run.capturedEvaluations += capture.evaluationCount();
-            run.distinctObservedAssignments += capture.distinctAssignments();
+            for (UnifiedCandidateRecorder.Event e:capture.uniqueEvents())
+                globalUniqueAssignments.add(e.assignment);
+            run.distinctObservedAssignments = globalUniqueAssignments.size();
             run.searchMs += m.searchWallClockMillis;
             append(run,capture.frontPoints(),capture.frontAssignments());
             appendAuditHistory(run,capture);
@@ -332,6 +336,7 @@ public final class FLAResearchExperiment {
     private static void runScreeningAudit(String dax,String wf,long seed,Run run,double[] frozenRef) {
         Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
         for(Candidate c:run.allVisited) unique.putIfAbsent(c.assignment,c);
+        run.auditUniqueVisited=unique.size();
         List<Candidate> dominated=new ArrayList<>();
         Set<Map<Integer,Integer>> frontAssignments=new HashSet<>();
         for(Candidate c:run.candidates)frontAssignments.add(c.assignment);
@@ -411,7 +416,7 @@ public final class FLAResearchExperiment {
                 double pct=100.0*r.auditHvGain/Math.max(1e-12,r.simHv);
                 w.write(String.format(Locale.ROOT,
                      "%s,%s,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.8f%n",
-                    wf,r.algorithm,seed,r.distinctObservedAssignments,r.dominatedPool,r.tiedPool,
+                    wf,r.algorithm,seed,r.auditUniqueVisited,r.dominatedPool,r.tiedPool,
                     r.audited.size(),r.newSimulatorNondominated,r.simHv,
                     r.simHv+r.auditHvGain,r.auditHvGain,pct));
             }
