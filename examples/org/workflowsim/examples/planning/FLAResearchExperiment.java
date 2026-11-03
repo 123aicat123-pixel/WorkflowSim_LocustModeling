@@ -548,7 +548,7 @@ public final class FLAResearchExperiment {
                         mapping.append(e.getKey()).append(':').append(e.getValue());
                     }
                     w.write(String.format(Locale.ROOT,
-                        "%s,%s,%d,%s,%.9f,%.9f,%.9f,%.9f,%s%n",
+                        "%s,%s,%d,%s,%.17g,%.17g,%.17g,%.17g,%s%n",
                         wf,r.algorithm,seed,r.auditStrata.get(i),
                         c.planned[0],c.planned[1],c.simulated[0],c.simulated[1],
                         mapping.toString()));
@@ -708,7 +708,7 @@ public final class FLAResearchExperiment {
                         if(sb.length()>0)sb.append('|');
                         sb.append(p.getKey()).append(':').append(p.getValue());
                     }
-                    w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%s%n",
+                    w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%s%n",
                         wf,r.algorithm,seed,++i,c.planned[0],c.planned[1],
                         c.independentPlanned[0],c.independentPlanned[1],
                         c.simulated[0],c.simulated[1],sb.toString()));
