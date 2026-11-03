@@ -541,7 +541,8 @@ public final class FLAResearchExperiment {
         if(pool.size()<selected.size()+1 || selected.size()<4)
             throw new IllegalStateException("Invalid online feedback candidate pool");
         for(Candidate c:selected)
-            if(c.simulated==null)throw new IllegalStateException("Online selection attempted look-ahead");
+            if(useObservedFront && c.simulated==null)
+                throw new IllegalStateException("Online feedback requires completed earlier replay");
         double minM=Double.POSITIVE_INFINITY,maxM=0.,minC=Double.POSITIVE_INFINITY,maxC=0.;
         for(Candidate c:pool) {
             minM=Math.min(minM,c.planned[0]);maxM=Math.max(maxM,c.planned[0]);
