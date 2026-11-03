@@ -1,0 +1,40 @@
+name: Read-only DAG Dependency vs Same-VM Task-Order Inversion
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-task-order-dependency.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ancestry-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable actual WorkflowSim per-task replays
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41660167042
+          github-token: ${{ github.token }}
+          pattern: fixed-task-timeline-*-41660167042
+          path: original
+      - name: Compare within-VM task order by DAX ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_task_order_dependency_audit.py
+          python3 scripts/fla_task_order_dependency_audit.py original config/dax reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-sha.txt
+          printf 'Fixed true simulator source: 41660167042\n' > reports/original-run.txt
+          cat reports/dag_dependency_order_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain all case rows and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-task-ancestry-order-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
