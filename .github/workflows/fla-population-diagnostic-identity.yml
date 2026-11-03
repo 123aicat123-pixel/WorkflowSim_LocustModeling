@@ -1,0 +1,60 @@
+name: FLA selected-population diagnostics strict same-seed ON-OFF nonintrusion gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-population-diagnostic-identity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and test deterministic diagnostic exactness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs results
+          git rev-parse HEAD | tee ci-logs/source_sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FLAPopulationDiagnosticsTest
+          java -Dworkflowsim.planningStageInAware=true -cp 'build/classes:lib/*' org.workflowsim.planning.TimelineParetoNeighborTest
+      - name: Run pairwise identical K16 simulation with passive instrumentation OFF versus ON
+        shell: bash
+        run: |
+          set -euo pipefail
+          for variant in v12-hvbandit v15-timelinegate; do
+            for toggle in off on; do
+              java -Dworkflowsim.planningStageInAware=true \
+                -Ddagfla.populationDiagnostics=$([[ "$toggle" == on ]] && echo true || echo false) \
+                -Dliwsa.vmSpeedProfile=default \
+                -Dliwsa.vmPriceProfile=default \
+                -Ddagfla.budgetReplayK=16 \
+                -Ddagfla.budgetReplayPolicy=pareto-cover \
+                -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+                Montage_25 171 30 100 "results/$toggle-$variant" "$variant" \
+                2>&1 | tee "ci-logs/$toggle-$variant.log"
+            done
+          done
+          python3 -m py_compile scripts/fla_population_diagnostic_identity.py
+          python3 scripts/fla_population_diagnostic_identity.py results | tee ci-logs/identity.log
+          cat ci-logs/identity.log >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-population-identity-${{ github.run_id }}
+          path: |
+            ci-logs/
+            results/*_population_diagnostics.csv
+            results/*_summary.csv
+            results/*_replays.csv
+            results/*_visited_fingerprints.csv
+            results/identity_pass.txt
+          retention-days: 90
