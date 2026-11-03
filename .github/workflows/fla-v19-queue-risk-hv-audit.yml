@@ -1,0 +1,40 @@
+name: Read-only FLA v19 Queue-Risk Real K16 Pareto HV and CPU Cost Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v19-queue-risk-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  read-only-complete-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all four complete immutable v12/v18/v19/NSGA-II source actual sim jobs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41690669415
+          github-token: ${{ github.token }}
+          pattern: fla-v19-queue-risk-*-41690669415
+          path: original
+      - name: Verify 256 source simulator calls and one four-arm real-HV reference per DAG and seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v19_queue_risk_actual_hv_audit.py
+          python3 scripts/fla_v19_queue_risk_actual_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          printf 'Original successful four-job real simulator run: 41690669415\n' > reports/source-run-id.txt
+          cat reports/v19_original_true_hv_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain positive and negative actual results with mechanism and runtime counters
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v19-queue-risk-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
