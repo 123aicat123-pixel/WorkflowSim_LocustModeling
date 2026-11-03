@@ -103,7 +103,7 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
@@ -185,7 +185,9 @@ public final class FLAResearchExperiment {
                         ? budgetedRandomVisited(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm)
                         : "scalar-sweep".equals(BUDGET_REPLAY_POLICY)
                             ? budgetedScalarSweep(run.allVisited,BUDGET_REPLAY_K)
-                            : budgetedPlannedCoverage(run.allVisited,BUDGET_REPLAY_K))
+                            : "extreme-band3".equals(BUDGET_REPLAY_POLICY)
+                                ? budgetedExtremeBand3(run.allVisited,BUDGET_REPLAY_K)
+                                : budgetedPlannedCoverage(run.allVisited,BUDGET_REPLAY_K))
                     : plannedNondominated(run.candidates);
             if (BUDGET_REPLAY_K > 0 && front.size() != BUDGET_REPLAY_K)
                 throw new IllegalStateException("Wrong prospective simulator replay call budget");
@@ -246,7 +248,7 @@ public final class FLAResearchExperiment {
                     "PROSPECTIVE_REPLAY_REPLICATE=" + BUDGET_REPLAY_REPLICATE,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
                     "Pre-simulation selection: " + BUDGET_REPLAY_POLICY +
-                    " (Pareto max-min coverage, extreme-first scalar sweep, or seeded random)",
+                    " (Pareto max-min coverage, extreme-band3 reservation, scalar sweep, or seeded random)",
                     "Selection never reads true simulator objective values; K is separate from optimizer evaluation counts",
                     "Simulator HV reference in summary is shared across solver arms within this run only",
                     "This is NOT the full visited simulator Pareto front and not a registered reference point",
@@ -723,6 +725,62 @@ public final class FLAResearchExperiment {
         System.out.println("PASS prospective planned-only scalar-sweep replay selection K="+budget
                 +" uniqueHistory="+unique.size());
         return picked;
+    }
+
+    /**
+     * Conservative, fixed-before-validation ablation of coverage: reserve up to
+     * three DISTINCT planned objective points at each extreme, then use the
+     * unchanged Pareto/max-min coverage order to fill exactly K genotype slots.
+     * This consumes NO true simulator objectives and never changes the optimizer.
+     * Tied objective points are skipped in the reserved band to avoid consuming
+     * all K with costseed duplicates. No parameters are tuned per DAG.
+     */
+    private static List<Candidate> budgetedExtremeBand3(List<Candidate> history,int budget) {
+        Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
+        for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
+        List<Candidate> all=new ArrayList<>(unique.values());
+        if(budget<=0 || all.size()<budget)
+            throw new IllegalStateException("Invalid extreme-band3 K="+budget
+                    +", unique schedules="+all.size());
+        for(Candidate c:all)valid(c.planned);
+        Comparator<Candidate> byMakespan=Comparator
+                .comparingDouble((Candidate c)->c.planned[0])
+                .thenComparingDouble(c->c.planned[1])
+                .thenComparing(FLAResearchExperiment::canonicalMappingKey);
+        Comparator<Candidate> byCost=Comparator
+                .comparingDouble((Candidate c)->c.planned[1])
+                .thenComparingDouble(c->c.planned[0])
+                .thenComparing(FLAResearchExperiment::canonicalMappingKey);
+        List<Candidate> selected=new ArrayList<>();
+        int quota=Math.min(3,Math.max(1,budget/4));
+        List<Candidate> mOrder=new ArrayList<>(all);
+        List<Candidate> cOrder=new ArrayList<>(all);
+        mOrder.sort(byMakespan);
+        cOrder.sort(byCost);
+        for(List<Candidate> pool:Arrays.asList(mOrder,cOrder)) {
+            int reserved=0;
+            for(Candidate c:pool) {
+                if(reserved>=quota || selected.size()>=budget)break;
+                boolean repeatedPoint=false;
+                for(Candidate previous:selected) {
+                    if(c.planned[0]==previous.planned[0] && c.planned[1]==previous.planned[1]) {
+                        repeatedPoint=true;break;
+                    }
+                }
+                if(!repeatedPoint && !selected.contains(c)) {
+                    selected.add(c);reserved++;
+                }
+            }
+        }
+        for(Candidate c:budgetedPlannedCoverage(history,budget)) {
+            if(selected.size()==budget)break;
+            if(!selected.contains(c))selected.add(c);
+        }
+        if(selected.size()!=budget)
+            throw new IllegalStateException("Could not fill extreme-band3 K="+budget);
+        System.out.println("PASS prospective planned-only extreme-band3 replay selection K="+budget
+                +" quota="+quota+" uniqueHistory="+all.size());
+        return selected;
     }
 
     private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
