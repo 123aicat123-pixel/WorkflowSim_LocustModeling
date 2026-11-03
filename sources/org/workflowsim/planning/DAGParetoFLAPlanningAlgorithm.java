@@ -58,6 +58,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     /** V7 controlled exploration: low-rental-price initialization and low-cost archive guidance. */
     public static boolean CONFIG_COST_SEEDING = false;
     public static boolean CONFIG_COST_EXTREME_GUIDANCE = false;
+    /** v8: preserve genuine objective extremes from the evaluated parent/child pool. */
+    public static boolean CONFIG_RESERVE_COST_EXTREME = false;
+    public static boolean CONFIG_RESERVE_MAKESPAN_EXTREME = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -122,6 +125,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useArchiveDagBlock, usePreferenceDonor;
     private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
     private final boolean useCostSeeding, useCostExtremeGuidance;
+    private final boolean reserveCostExtreme, reserveMakespanExtreme;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -161,6 +165,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useStrongRepair = CONFIG_NOVELTY_STRONG_REPAIR;
         useCostSeeding = CONFIG_COST_SEEDING;
         useCostExtremeGuidance = CONFIG_COST_EXTREME_GUIDANCE;
+        reserveCostExtreme = CONFIG_RESERVE_COST_EXTREME;
+        reserveMakespanExtreme = CONFIG_RESERVE_MAKESPAN_EXTREME;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -303,6 +309,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 List<Solution> survivors=useParetoCrowdingSelection
                         ? selectGlobalCrowding(union,populationSize,globalRank,globalCrowd)
                         : selectGroup(union,0,populationSize,globalRank,globalCrowd,b,0.5);
+                if (reserveCostExtreme || reserveMakespanExtreme)
+                    reserveObjectiveExtremes(union,survivors,b);
                 survivors.sort(Comparator.comparingDouble((Solution x)->preference(x,alpha1,b))
                         .thenComparingDouble(x->x.makespan)
                         .thenComparingDouble(x->x.cost));
@@ -780,6 +788,50 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         return cd;
     }
 
+
+    /**
+     * Experimental v8: elite selection retains one best-cost and/or one
+     * best-makespan member of the evaluated parent+offspring pool before the
+     * two FLA subgroups are formed. This does not increase the number of
+     * objective evaluations, use a simulator oracle, or modify old defaults.
+     */
+    private void reserveObjectiveExtremes(List<Solution> union,
+            List<Solution> survivors,Bounds b) {
+        if(union.isEmpty()||survivors.isEmpty())return;
+        Solution costExtreme=union.get(0);
+        Solution timeExtreme=union.get(0);
+        for(Solution s:union) {
+            if(s.cost<costExtreme.cost ||
+                 (s.cost==costExtreme.cost && s.makespan<costExtreme.makespan))
+                 costExtreme=s;
+            if(s.makespan<timeExtreme.makespan ||
+                 (s.makespan==timeExtreme.makespan && s.cost<timeExtreme.cost))
+                 timeExtreme=s;
+        }
+        List<Solution> reserved=new ArrayList<>();
+        if(reserveCostExtreme)reserved.add(costExtreme);
+        if(reserveMakespanExtreme && !Arrays.equals(costExtreme.genes,timeExtreme.genes))
+            reserved.add(timeExtreme);
+        for(Solution wanted:reserved) {
+            boolean present=false;
+            for(Solution old:survivors)
+                if(Arrays.equals(old.genes,wanted.genes)){present=true;break;}
+            if(present)continue;
+            int victim=-1;
+            double worst=Double.NEGATIVE_INFINITY;
+            for(int i=0;i<survivors.size();i++){
+                Solution old=survivors.get(i);
+                boolean protectedMember=false;
+                for(Solution elite:reserved)
+                    if(Arrays.equals(old.genes,elite.genes)){protectedMember=true;break;}
+                if(protectedMember)continue;
+                double score=preference(old,0.5,b);
+                if(score>worst){worst=score;victim=i;}
+            }
+            if(victim<0)throw new IllegalStateException("No replaceable elite survivor");
+            survivors.set(victim,wanted);
+        }
+    }
 
     /**
      * NSGA-II-style environmental selection over the full parent+child pool.
