@@ -21,8 +21,8 @@ public final class ReplayReliabilityGateTest {
         check(!ReplayReliabilityGate.trust(list(new double[][]{
             {100,200},{100,201},{100,202},{100,203}}),list(new double[][]{
             {100,200},{100,201},{100,202},{100,203}})),"no planned rank evidence");
-        check(!ReplayReliabilityGate.trust(list(p.subList(0,2).toArray(new double[0][])),
-            list(accurate).subList(0,2)),"two replays cannot justify gate");
+        check(!ReplayReliabilityGate.trust(list(new double[][]{p[0],p[1]}),
+            list(new double[][]{accurate[0],accurate[1]})),"two replays cannot justify gate");
         try {
             ReplayReliabilityGate.trust(list(p),list(new double[][]{{100,220}});
             throw new AssertionError("mismatch accepted");
