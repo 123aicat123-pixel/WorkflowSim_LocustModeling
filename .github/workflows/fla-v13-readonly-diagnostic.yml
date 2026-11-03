@@ -1,0 +1,35 @@
+name: Retrospective v13 real K16 search operator extremes and Pareto dominance diagnostic
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v13-readonly-diagnostic.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41612325067
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: v13-search-*-41612325067
+          path: original
+      - name: Recompute reference-free Pareto cross-dominance and objective extremes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_v13_search_diagnostics.py original reports | tee reports/diagnostic.log
+          git rev-parse HEAD > reports/analysis_source_sha.txt
+          cat reports/v13_diagnostic_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v13-readonly-diagnostic-${{ github.run_id }}
+          path: reports
+          retention-days: 90
