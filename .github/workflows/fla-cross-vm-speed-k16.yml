@@ -1,0 +1,137 @@
+name: Novel DAG instance-size VM speed heterogeneity K16 causal feedback validation
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-cross-vm-speed-k16.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: Speed ${{ matrix.speed }} ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        workflow: [CyberShake_50, Epigenomics_46, Inspiral_30, Montage_50, Sipht_60]
+        seed: [113, 114]
+        speed: [default, staggered]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile full source and assert original/default and staggered VM MIPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source_sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.VMPriceProfilesRegressionTest
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.VMSpeedProfilesRegressionTest
+      - name: Independently run original Pareto and observed simulator-feedback with EXACT same VM config
+        shell: bash
+        run: |
+          set -euo pipefail
+          for policy in pareto-cover online-observed-hv; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+              -Dliwsa.vmPriceProfile=default \
+              -Ddagfla.budgetReplayK=16 \
+              -Ddagfla.budgetReplayPolicy="$policy" \
+              -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+              "Output&Results/$policy-${{ matrix.speed }}-${{ matrix.workflow }}-s${{ matrix.seed }}" \
+              v12-fair-pair 2>&1 | tee "ci-logs/$policy.log"
+            grep -F 'PASS identical first TWO task->VM deterministic cost seeds' "ci-logs/$policy.log"
+          done
+      - name: Strict simulator/VM/protocol and exact evaluated genotype hash equality gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,collections,math
+          wf='${{ matrix.workflow }}';seed='${{ matrix.seed }}';speed='${{ matrix.speed }}'
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          data={}
+          for policy in ('pareto-cover','online-observed-hv'):
+              prefix=pathlib.Path('Output&Results')/(policy+'-'+speed+'-'+wf+'-s'+seed)
+              def read(s):
+                  with pathlib.Path(str(prefix)+s).open(newline='') as f:return list(csv.DictReader(f))
+              summary=read('_summary.csv');replays=read('_replays.csv');fp=read('_visited_fingerprints.csv')
+              assert len(summary)==len(fp)==3 and len(replays)==48
+              assert {r['algorithm'] for r in summary}=={r['algorithm'] for r in fp}==names
+              assert collections.Counter(r['algorithm'] for r in replays)=={n:16 for n in names}
+              assert all(int(r['evaluations'])==int(r['captured_evaluations'])==3030 and int(r['replayed'])==16 for r in summary)
+              for r in replays:
+                  assert all(math.isfinite(float(r[k])) and float(r[k])>0 for k in
+                    ('planned_makespan','planned_cost','sim_makespan','sim_cost'))
+                  for obj in ('makespan','cost'):
+                      a=float(r['planned_'+obj]);b=float(r['independent_planned_'+obj])
+                      assert abs(a-b)<=1e-6*max(1.0,abs(b)),(policy,r)
+              p=pathlib.Path(str(prefix)+'_budget_protocol.txt').read_text()
+              assert 'VM_SPEED_PROFILE='+speed in p and 'VM_PRICE_PROFILE=default' in p
+              assert 'PROSPECTIVE_REPLAY_BUDGET_K=16' in p
+              assert 'PROSPECTIVE_REPLAY_POLICY='+policy in p
+              data[policy]={r['algorithm']:(r['history_sha256'],int(r['distinct_visited'])) for r in fp}
+              orders={alg:sorted((r for r in replays if r['algorithm']==alg),key=lambda r:int(r['candidate_index'])) for alg in names}
+              if policy=='pareto-cover':first={alg:[r['mapping'] for r in orders[alg][:4]] for alg in names}
+              else:
+                  assert all(first[alg]==[r['mapping'] for r in orders[alg][:4]] for alg in names)
+                  trace=read('_online_trace.csv')
+                  assert len(trace)==48
+                  for alg in names:
+                      t=sorted((r for r in trace if r['algorithm']==alg),key=lambda r:int(r['step']))
+                      assert len(t)==16
+                      assert all(t[i]['mapping']==orders[alg][i]['mapping'] for i in range(16))
+                      assert all(int(t[i]['observed_before'])==i for i in range(4,16))
+              for r in summary:
+                  times=[float(r[k]) for k in ('search_ms','selection_ms','replay_ms','search_selection_replay_ms')]
+                  assert all(math.isfinite(v) and v>=0 for v in times) and times[2]>0
+                  assert abs(sum(times[:3])-times[3])<0.004
+          assert data['pareto-cover']==data['online-observed-hv']
+          print('PASS exact search pool SHA, 3030 + K16, 4 shared warmup, true simulator and both speed/profile flags')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crossvm-${{ matrix.speed }}-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_visited_fingerprints.csv
+            Output&Results/*_online_trace.csv
+            Output&Results/*_budget_protocol.txt
+          retention-days: 90
+          if-no-files-found: warn
+  report:
+    needs: paired
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: crossvm-*-${{ github.run_id }}
+          path: input
+      - name: Combine all 20 matched cases and score with planner-only fixed reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_cross_vm_speed_validation.py input reports 2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/cross_vm_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crossvm-summary-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
