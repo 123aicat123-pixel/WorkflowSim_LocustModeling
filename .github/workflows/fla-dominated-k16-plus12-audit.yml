@@ -1,0 +1,40 @@
+name: Independent Recovery Audit of Completed K16 plus K12 Actual WorkflowSim Data
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-dominated-k16-plus12-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  independent-immutable-source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original four true simulator artifacts despite only postvalidation source CI failure
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41693332570
+          github-token: ${{ github.token }}
+          pattern: fla-dom-k16plus12-*-41693332570
+          path: original
+      - name: Independently recheck K16 + K12 actual labels, Pareto classification and HV without any replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_dominated_k16_plus12_rank_hv_audit.py
+          python3 scripts/fla_dominated_k16_plus12_rank_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          printf 'Original completed true simulator run (postprocessing failure): 41693332570; source commit f963e95c952a0d3dd67a26cdefa2b5eb221d8d61\n' > reports/source-provenance.txt
+          cat reports/complete_k16_plus12_actual_rank_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all real K16+K12 source cases, all pair mistakes and transparent failure provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-k16plus12-independent-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
