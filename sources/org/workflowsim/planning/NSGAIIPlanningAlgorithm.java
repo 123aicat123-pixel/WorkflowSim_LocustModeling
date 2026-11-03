@@ -565,8 +565,16 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
                 decEvStart, decEvFinish, decEvCount, decFinish, decAssigned);
         stageInAwareEvaluator = Boolean.getBoolean("workflowsim.planningStageInAware")
                 ? new StageInAwareScheduleEvaluator(taskOrder, vmList) : null;
+        if(Boolean.getBoolean("dagfla.priorityAwareSearch") &&
+                !Boolean.getBoolean("dagfla.useReadyQueueObjective"))
+            throw new IllegalArgumentException("Priority-aware search requires ready-queue objective");
+        ReadyQueueScheduleEvaluator.QueuePolicy selectedPolicy=
+                Boolean.getBoolean("dagfla.priorityAwareSearch")
+                ?ReadyQueueScheduleEvaluator.fromRuntimeName(
+                    System.getProperty("dagfla.fixedVmReadyPriority","fifo"))
+                :ReadyQueueScheduleEvaluator.QueuePolicy.TASK_ID;
         readyQueueEvaluator=Boolean.getBoolean("dagfla.useReadyQueueObjective")
-                ?new ReadyQueueScheduleEvaluator(taskOrder,vmList):null;
+                ?new ReadyQueueScheduleEvaluator(taskOrder,vmList,selectedPolicy):null;
         String dualMode=System.getProperty("dagfla.dualModelMode","off");
         if(!"off".equals(dualMode) && Boolean.getBoolean("dagfla.useReadyQueueObjective"))
             throw new IllegalArgumentException("Conflicting decoder modes");
