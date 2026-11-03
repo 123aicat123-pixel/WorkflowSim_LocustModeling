@@ -1,0 +1,110 @@
+name: FLA Fixed-Mapping Per-Task Timeline Validation
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-fixed-task-timeline.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  task-trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_46, CyberShake_100]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41626382711
+          github-token: ${{ github.token }}
+          pattern: v17-confirm-${{ matrix.workflow }}-default-s211-41626382711
+          path: original
+      - name: Clean compile all Java
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes 'Output&Results' reports
+          find sources examples tests -name '*.java' -type f | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Trace identical frozen mappings under both VM profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t src < <(find original -type f -name "v17-confirm-default-${{ matrix.workflow }}-s211_replays.csv")
+          test "${#src[@]}" -eq 1
+          cp "${src[0]}" reports/original_replays.csv
+          for algorithm in 'DAG-Pareto-FLA[v12-hvbandit]' 'NSGA-II[costseed]'; do
+            if [[ "$algorithm" == DAG* ]]; then tag=v12; else tag=nsga; fi
+            for profile in default staggered; do
+              java -Dworkflowsim.planningStageInAware=true -Ddagfla.fixedTaskTrace=true \
+                -Dliwsa.vmSpeedProfile="$profile" -cp 'build/classes:lib/*' \
+                org.workflowsim.examples.planning.FLAFixedMappingReplay \
+                '${{ matrix.workflow }}' 211 "${src[0]}" "$algorithm" 2 \
+                "reports/${tag}_${profile}.csv" > "reports/${tag}_${profile}.log" 2>&1 || {
+                  tail -60 "reports/${tag}_${profile}.log"
+                  exit 1
+                }
+              test -s "reports/${tag}_${profile}_tasks.csv"
+            done
+          done
+          python3 - <<'PY'
+          import csv,math,pathlib,statistics
+          root=pathlib.Path('reports')
+          all_rows=[]
+          for alg in ('v12','nsga'):
+            for speed in ('default','staggered'):
+              summary=list(csv.DictReader((root/f'{alg}_{speed}.csv').open()))
+              task=list(csv.DictReader((root/f'{alg}_{speed}_tasks.csv').open()))
+              assert len(summary)==2 and len(task)>2
+              for candidate in (1,2):
+                group=[r for r in task if int(r['candidate_index'])==candidate]
+                mapping=next(r['mapping'] for r in summary if int(r['source_candidate_index'])==candidate)
+                pairs=dict(tuple(map(int,p.split(':'))) for p in mapping.split('|'))
+                assert len(group)==len(pairs)
+                assert {int(r['task_id']) for r in group}==set(pairs)
+                for r in group:
+                  assert int(r['vm_id'])==pairs[int(r['task_id'])]
+                  for key in ('planned_start','planned_finish','actual_start','actual_finish',
+                    'actual_cpu_time','nominal_compute_seconds','cpu_minus_compute_seconds','start_error','finish_error'):
+                    assert math.isfinite(float(r[key])),(key,r)
+                  assert float(r['planned_finish'])>=float(r['planned_start'])
+                  assert float(r['actual_finish'])>=float(r['actual_start'])
+                  assert float(r['cpu_minus_compute_seconds'])>=-1e-5
+              all_rows+=task
+          assert len(all_rows)>0
+          w=csv.DictWriter((root/'all_task_timelines.csv').open('w',newline=''),fieldnames=list(all_rows[0]))
+          w.writeheader();w.writerows(all_rows)
+          by={}
+          for alg in ('v12','nsga'):
+            for speed in ('default','staggered'):
+              a=[r for r in all_rows if r['algorithm']==('DAG-Pareto-FLA[v12-hvbandit]' if alg=='v12' else 'NSGA-II[costseed]') and r['speed']==speed]
+              by[(alg,speed)]=a
+          with (root/'task_timeline_report.md').open('w') as f:
+            f.write('# Per-task fixed-mapping planner versus actual WorkflowSim timeline\n\n')
+            f.write('Two source arms × 2 original K16 prefixes × 2 VM profiles = 8 actual replay calls per DAG; original Task IDs joined exactly.\n\n')
+            f.write('| Assignment source | Speed | Tasks | Mean absolute finish error | Largest absolute finish error | Mean abs start error |\n')
+            f.write('|---|---|---:|---:|---:|---:|\n')
+            for (alg,speed),rows in by.items():
+              if not rows:raise AssertionError((alg,speed))
+              f.write(f"| {alg} | {speed} | {len(rows)} | {statistics.mean(abs(float(r['finish_error'])) for r in rows):.6f} | {max(abs(float(r['finish_error'])) for r in rows):.6f} | {statistics.mean(abs(float(r['start_error'])) for r in rows):.6f} |\n")
+            f.write('\n## Largest task-level absolute finish mismatches\n\n')
+            for r in sorted(all_rows,key=lambda r:-abs(float(r['finish_error'])))[:8]:
+              f.write(f"- {r['algorithm']} {r['speed']} candidate={r['candidate_index']} task={r['task_id']} VM={r['vm_id']} finish error={float(r['finish_error']):+.6f}s, start error={float(r['start_error']):+.6f}s, CPU-minus-compute proxy={float(r['cpu_minus_compute_seconds']):.6f}s\n")
+            f.write('\nNot a causal proof of stage-in or queueing; job start/finish and CPU residual are observational. Default metrics rechecked against archived original true simulator results.\n')
+          print((root/'task_timeline_report.md').read_text())
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cat reports/task_timeline_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain complete original and task-level diagnostics
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixed-task-timeline-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
