@@ -1,0 +1,134 @@
+name: Held-aside deterministic synthetic DAG40 causal K16 three-policy VM stress
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-synthetic-causal-k16.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: Synthetic ${{ matrix.topology }} ${{ matrix.speed }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        topology: [SynthWide_40, SynthDeep_40]
+        speed: [default, staggered]
+        seed: [121, 122]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Generate deterministic synthetic topology, compile and validate VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source_sha.txt
+          python3 scripts/fla_locked_synthetic_dax.py | tee ci-logs/synthetic_topology_sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.VMSpeedProfilesRegressionTest
+      - name: Run 3 causal K16 replay policies with same planner history under each VM setting
+        shell: bash
+        run: |
+          set -euo pipefail
+          for policy in pareto-cover online-planned-hv online-observed-hv; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+              -Dliwsa.vmPriceProfile=default \
+              -Ddagfla.budgetReplayK=16 \
+              -Ddagfla.budgetReplayPolicy="$policy" \
+              -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.topology }}' '${{ matrix.seed }}' 30 100 \
+              "Output&Results/$policy-${{ matrix.speed }}-${{ matrix.topology }}-s${{ matrix.seed }}" \
+              v12-fair-pair 2>&1 | tee "ci-logs/$policy.log"
+            grep -F 'PASS identical first TWO task->VM deterministic cost seeds' "ci-logs/$policy.log"
+          done
+      - name: Confirm 3030 search plus exactly K16 real simulator calls and no current/future label access
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math,collections
+          dag='${{ matrix.topology }}';seed='${{ matrix.seed }}';speed='${{ matrix.speed }}'
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          hashes={};warm={}
+          for policy in ('pareto-cover','online-planned-hv','online-observed-hv'):
+              prefix=pathlib.Path('Output&Results')/(policy+'-'+speed+'-'+dag+'-s'+seed)
+              def read(s):
+                  with pathlib.Path(str(prefix)+s).open(newline='') as f:return list(csv.DictReader(f))
+              stat=read('_summary.csv');replays=read('_replays.csv');fp=read('_visited_fingerprints.csv')
+              assert len(stat)==len(fp)==3 and len(replays)==48
+              assert {r['algorithm'] for r in stat}=={r['algorithm'] for r in fp}==names
+              assert collections.Counter(r['algorithm'] for r in replays)=={n:16 for n in names}
+              assert all(int(r['evaluations'])==int(r['captured_evaluations'])==3030 and int(r['replayed'])==16 for r in stat)
+              hashes[policy]={r['algorithm']:r['history_sha256'] for r in fp}
+              warm[policy]={alg:[r['mapping'] for r in sorted(
+                  (x for x in replays if x['algorithm']==alg),
+                  key=lambda x:int(x['candidate_index']))[:4]] for alg in names}
+              protocol=pathlib.Path(str(prefix)+'_budget_protocol.txt').read_text()
+              assert 'PROSPECTIVE_REPLAY_BUDGET_K=16' in protocol and 'VM_SPEED_PROFILE='+speed in protocol
+              assert 'PROSPECTIVE_REPLAY_POLICY='+policy in protocol and 'VM_PRICE_PROFILE=default' in protocol
+              for r in replays:
+                  assert all(math.isfinite(float(r[k])) and float(r[k])>0 for k in
+                    ('planned_makespan','planned_cost','sim_makespan','sim_cost'))
+              for r in stat:
+                  times=[float(r[k]) for k in ('search_ms','selection_ms','replay_ms','search_selection_replay_ms')]
+                  assert all(math.isfinite(v) and v>=0 for v in times) and times[2]>0
+                  assert abs(sum(times[:3])-times[3])<.004
+              if policy.startswith('online-'):
+                  trace=read('_online_trace.csv')
+                  assert len(trace)==48
+                  for alg in names:
+                      t=sorted((r for r in trace if r['algorithm']==alg),key=lambda r:int(r['step']))
+                      assert len(t)==16
+                      assert all(int(t[i]['observed_before'])==i for i in range(4,16))
+          assert all(v==hashes['pareto-cover'] for v in hashes.values())
+          assert all(v==warm['pareto-cover'] for v in warm.values())
+          print('PASS deterministic synthetic held-aside DAG: three K16 policies with same SHA candidate histories')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synth-holdout-${{ matrix.topology }}-${{ matrix.speed }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            config/dax/Synth*.xml
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_visited_fingerprints.csv
+            Output&Results/*_online_trace.csv
+            Output&Results/*_budget_protocol.txt
+          retention-days: 90
+          if-no-files-found: warn
+  report:
+    needs: paired
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: synth-holdout-*-${{ github.run_id }}
+          path: inputs
+      - name: Score true causal K16 HV on preplanned references and retain all negative cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_synthetic_causal_holdout.py inputs reports 2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/synthetic_causal_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synth-holdout-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
