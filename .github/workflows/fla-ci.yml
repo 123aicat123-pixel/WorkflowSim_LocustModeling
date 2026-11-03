@@ -63,6 +63,14 @@ jobs:
             org.workflowsim.planning.StageInAwareEvaluatorTest \
             2>&1 | tee ci-logs/stagein-aware-regression.log
 
+      - name: Assert experimental causal reliability gate and fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp "build/classes:lib/*" \\
+            org.workflowsim.planning.ReplayReliabilityGateTest \\
+            2>&1 | tee ci-logs/reliability-gate-test.log
+
       - name: Check Montage_25 decoder against WorkflowSim
         shell: bash
         run: |

@@ -26,6 +26,7 @@ import org.workflowsim.planning.LIWSAPlanningAlgorithm;
 import org.workflowsim.planning.MLEAOPlanningAlgorithm;
 import org.workflowsim.planning.NSGAIIPlanningAlgorithm;
 import org.workflowsim.planning.UnifiedCandidateRecorder;
+import org.workflowsim.planning.ReplayReliabilityGate;
 import org.workflowsim.utils.Parameters;
 
 /**
@@ -107,7 +108,7 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
@@ -213,14 +214,16 @@ public final class FLAResearchExperiment {
             for (int index=0;index<replayGoal;index++) {
                 if (feedback && index>=4) {
                     long selectStart=System.nanoTime();
-                    FeedbackChoice selection = chooseFeedbackMode(run.feedbackPool,run.candidates,BUDGET_REPLAY_POLICY);
+                    FeedbackChoice selection = "online-reliability-gated".equals(BUDGET_REPLAY_POLICY)
+                            ? chooseReliabilityGatedFeedback(run.feedbackPool,run.candidates)
+                            : chooseFeedbackMode(run.feedbackPool,run.candidates,BUDGET_REPLAY_POLICY);
                     run.policySelectionNanos+=System.nanoTime()-selectStart;
                     if (selection==null || run.candidates.contains(selection.candidate))
                         throw new IllegalStateException("Nonunique online feedback candidate");
                     run.candidates.add(selection.candidate);
                     run.feedbackTrace.add(String.format(Locale.ROOT,
-                            "%s,%d,%d,online,%s,%s,%.17g,%.17g,%.17g",
-                            run.algorithm,index+1,index,canonicalMappingKey(selection.candidate),
+                            "%s,%d,%d,%s,%s,%s,%.17g,%.17g,%.17g",
+                            run.algorithm,index+1,index,selection.decisionMode,canonicalMappingKey(selection.candidate),
                             selection.nearestMapping,selection.predictedMakespan,
                             selection.predictedCost,selection.predictedHvGain));
                 } else if (feedback) {
@@ -524,9 +527,13 @@ public final class FLAResearchExperiment {
         final double predictedMakespan;
         final double predictedCost;
         final double predictedHvGain;
+        final String decisionMode;
         FeedbackChoice(Candidate c,String near,double m,double cost,double hv) {
+            this(c,near,m,cost,hv,"online");
+        }
+        FeedbackChoice(Candidate c,String near,double m,double cost,double hv,String mode) {
             candidate=c;nearestMapping=near;predictedMakespan=m;
-            predictedCost=cost;predictedHvGain=hv;
+            predictedCost=cost;predictedHvGain=hv;decisionMode=mode;
         }
     }
 
@@ -540,6 +547,38 @@ public final class FLAResearchExperiment {
      */
     private static FeedbackChoice chooseOnlineFeedback(List<Candidate> pool,List<Candidate> selected) {
         return chooseFeedbackMode(pool,selected,"online-nearest-hv");
+    }
+
+    /**
+     * Experimental, predeclared reliability gate (not the production default).
+     * All tests use only completed earlier replay labels. If there is insufficient
+     * ordering evidence or a large/unstable makespan residual, fall back to the
+     * next not-yet-replayed candidate in the fixed planned Pareto-cover order.
+     * This policy is independent of the optimizer and cannot change its history.
+     */
+    private static FeedbackChoice chooseReliabilityGatedFeedback(
+            List<Candidate> pool,List<Candidate> selected) {
+        if(pool.size()<=selected.size() || selected.size()<4)
+            throw new IllegalStateException("Invalid reliability-gated replay pool");
+        List<double[]> predicted=new ArrayList<>();
+        List<double[]> observed=new ArrayList<>();
+        for(Candidate c:selected) {
+            if(c.simulated==null)
+                throw new IllegalStateException("Reliability gate requires all prior replay labels");
+            predicted.add(c.planned);
+            observed.add(c.simulated);
+        }
+        if(ReplayReliabilityGate.trust(predicted,observed)) {
+            FeedbackChoice choice=chooseFeedbackMode(pool,selected,"online-observed-hv");
+            return new FeedbackChoice(choice.candidate,choice.nearestMapping,
+                    choice.predictedMakespan,choice.predictedCost,
+                    choice.predictedHvGain,"gated-observed");
+        }
+        for(Candidate c:pool) {
+            if(!selected.contains(c))
+                return new FeedbackChoice(c,"",c.planned[0],c.planned[1],0.,"gated-cover");
+        }
+        throw new IllegalStateException("No unreplayed cover fallback candidate");
     }
 
     /** Exact factor ablation: planned-front greedy, observed-front greedy, observed+residual. */
