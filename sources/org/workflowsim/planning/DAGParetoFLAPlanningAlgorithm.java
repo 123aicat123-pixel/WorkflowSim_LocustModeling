@@ -63,6 +63,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_RESERVE_MAKESPAN_EXTREME = false;
     /** v9: DAG-edge relocation, 0=off, 1=co-location, 2=separation, 3=two-group-directed. */
     public static int CONFIG_EDGE_RELOCATION_MODE = 0;
+    /** v10 makespan-critical single-gene relocation; 0=off,1=fast,2=cost-guarded. */
+    public static int CONFIG_CRITICAL_RELOCATION_MODE = 0;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -89,6 +91,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public int group1Size;
         public int group2Size;
         public int edgeRelocationChanges;
+        public int criticalRelocationChanges;
         public double finalAlpha1;
         public double finalDiversity;
         public List<double[]> searchTrace; // {iteration, archiveSize, bestM, bestCost, diversity}
@@ -129,7 +132,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
-    private final int edgeRelocationMode;
+    private final int edgeRelocationMode, criticalRelocationMode;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -143,10 +146,12 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private double[][] optimisticServiceSeconds;
     private int[] dagEdgeParent, dagEdgeChild;
     private double[] dagEdgeWeight;
+    private int[][] criticalParentIndices;
+    private double[][] criticalParentTransferMb;
     private int n, group1Size;
     private List<Solution> group1, group2;
     private double alpha1 = 0.85;
-    private int doCount, eoCount, ssoCount, edgeChangeCount;
+    private int doCount, eoCount, ssoCount, edgeChangeCount, criticalChangeCount;
 
     public DAGParetoFLAPlanningAlgorithm() {
         populationSize = CONFIG_POPULATION_SIZE;
@@ -174,6 +179,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         reserveCostExtreme = CONFIG_RESERVE_COST_EXTREME;
         reserveMakespanExtreme = CONFIG_RESERVE_MAKESPAN_EXTREME;
         edgeRelocationMode = CONFIG_EDGE_RELOCATION_MODE;
+        criticalRelocationMode = CONFIG_CRITICAL_RELOCATION_MODE;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -201,7 +207,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
-        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0) prepareResourceHeuristic();
+        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0) prepareResourceHeuristic();
+        if (criticalRelocationMode != 0) prepareCriticalProxy();
         if (edgeRelocationMode != 0) prepareDagEdgeRelocation();
         if (!useDag) { Arrays.fill(importance, 1.0); }
         random = seed == null ? new Random() : new Random(seed);
@@ -210,7 +217,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         group1 = new ArrayList<>(initial.subList(0, group1Size));
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
         archive.clear(); searchTrace.clear();
-        doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; alpha1 = 0.85;
+        doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0; alpha1 = 0.85;
         for (Solution s : initial) { archiveConsider(s); }
         final Set<String> globalVisited = useNoveltyRepair && useGlobalHistory
                 ? new HashSet<String>() : null;
@@ -299,6 +306,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         edgeRelocation(genes, isG1);
                         if (!Arrays.equals(beforeRelocation, genes)) edgeChangeCount++;
                     }
+                    if (criticalRelocationMode != 0 && isG1 && random.nextDouble() < 0.45) {
+                        int[] beforeCritical = genes.clone();
+                        criticalRelocate(genes);
+                        if (!Arrays.equals(beforeCritical, genes)) criticalChangeCount++;
+                    }
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
                 Solution child = new Solution(genes, evaluator.evaluate(genes));
@@ -368,14 +380,15 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.group1Size = group1.size();
         m.group2Size = group2.size();
         m.edgeRelocationChanges = edgeChangeCount;
+        m.criticalRelocationChanges = criticalChangeCount;
         m.finalAlpha1 = alpha1;
         m.finalDiversity = hammingDiversity(population());
         m.searchTrace = new ArrayList<>();
         for (double[] a : searchTrace) { m.searchTrace.add(a.clone()); }
         lastRun = m;
-        System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d%n",
+        System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d criticalRelocationChanges=%d%n",
                 m.paretoFrontSize,m.chosenMakespan,m.chosenCost,m.objectiveEvaluations,
-                m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges);
+                m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges,m.criticalRelocationChanges);
     }
 
     private List<Solution> population() {
@@ -631,6 +644,121 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         double r = random.nextDouble();
         genes[k] = (r < 0.75 || second < 0) ? best
                 : (r < 0.95 || third < 0) ? second : third;
+    }
+
+
+    /**
+     * v10 surrogate for critical-path time only. This is NOT an extra
+     * objective evaluation: no call to evaluator or candidate recorder.
+     * Real objectives still use StageInAwareScheduleEvaluator exactly once
+     * after the child genes are finalized. The proxy deliberately ignores
+     * caching, insertion gaps and resource provisioning overhead, and is
+     * useful only for ranking local assignment proposals.
+     */
+    private void prepareCriticalProxy() {
+        IdentityHashMap<Task,Integer> idx = new IdentityHashMap<>();
+        for(int k=0;k<n;k++)idx.put(taskOrder.get(k),k);
+        criticalParentIndices=new int[n][];
+        criticalParentTransferMb=new double[n][];
+        for(int k=0;k<n;k++){
+            Task child=taskOrder.get(k);
+            List<Integer> parents=new ArrayList<>();
+            List<Double> transfers=new ArrayList<>();
+            for(Task parent:child.getParentList()){
+                Integer pi=idx.get(parent);
+                if(pi==null)continue;
+                double bytes=0.0;
+                for(FileItem out:parent.getFileList()){
+                    if(out.getType()!=Parameters.FileType.OUTPUT)continue;
+                    for(FileItem in:child.getFileList()){
+                        if(in.getType()==Parameters.FileType.INPUT && in.getName().equals(out.getName())){
+                            bytes+=in.getSize();
+                            break;
+                        }
+                    }
+                }
+                parents.add(pi);
+                transfers.add(Math.max(0.0,bytes/Consts.MILLION));
+            }
+            criticalParentIndices[k]=new int[parents.size()];
+            criticalParentTransferMb[k]=new double[parents.size()];
+            for(int j=0;j<parents.size();j++){
+                criticalParentIndices[k][j]=parents.get(j);
+                criticalParentTransferMb[k][j]=transfers.get(j);
+            }
+        }
+    }
+
+    private double approximateMakespan(int[] genes, double[] finishOut) {
+        double[] avail=new double[vmList.size()];
+        double[] finish=finishOut==null ? new double[n] : finishOut;
+        double makespan=0.0;
+        for(int k=0;k<n;k++){
+            int v=genes[k];
+            double ready=avail[v];
+            for(int j=0;j<criticalParentIndices[k].length;j++){
+                int p=criticalParentIndices[k][j];
+                double transfer=0.0;
+                if(genes[p]!=v){
+                    double bandwidth=Math.min(vmList.get(genes[p]).getBw(),vmList.get(v).getBw());
+                    transfer=criticalParentTransferMb[k][j]*8.0/Math.max(EPS,bandwidth);
+                }
+                ready=Math.max(ready,finish[p]+transfer);
+            }
+            finish[k]=ready+optimisticServiceSeconds[k][v];
+            avail[v]=finish[k];
+            makespan=Math.max(makespan,finish[k]);
+        }
+        return makespan;
+    }
+
+    private double approximateCost(int[] genes) {
+        double result=0.0;
+        for(int k=0;k<n;k++)
+            result+=optimisticServiceSeconds[k][genes[k]]*vmList.get(genes[k]).getCost();
+        return result;
+    }
+
+    /**
+     * Try one high-criticality task reassignment among at most eight late
+     * tasks. Evaluate all candidate alternatives with the CHEAP PROXY;
+     * record only ONE true objective evaluation later in the normal FLA loop.
+     * v10-guarded uses the same pure-time surrogate with a soft cost guard,
+     * not a second search objective call.
+     */
+    private void criticalRelocate(int[] genes) {
+        if(n==0)return;
+        double[] finish=new double[n];
+        double before=approximateMakespan(genes,finish);
+        double costBefore=criticalRelocationMode==2 ? approximateCost(genes) : 0;
+        Integer[] ordering=new Integer[n];
+        for(int k=0;k<n;k++)ordering[k]=k;
+        Arrays.sort(ordering,(a,b)->Double.compare(finish[b],finish[a]));
+        int top=Math.min(8,n);
+        int bestTask=-1,bestVm=-1;
+        double best=before;
+        // Tie-breaking and stochastic pressure preserve diversity but never
+        // trigger more objective evaluations.
+        for(int i=0;i<top;i++){
+            int k=ordering[i];
+            int original=genes[k];
+            for(int v:allowed[k]){
+                if(v==original)continue;
+                genes[k]=v;
+                double candidate=approximateMakespan(genes,null);
+                double score=candidate;
+                if(criticalRelocationMode==2){
+                    double extra=Math.max(0.0,approximateCost(genes)-costBefore);
+                    score+=0.25*before*extra/Math.max(EPS,costBefore);
+                }
+                score*=0.995+0.010*random.nextDouble();
+                if(score<best-1e-9){
+                    best=score;bestTask=k;bestVm=v;
+                }
+            }
+            genes[k]=original;
+        }
+        if(bestTask>=0)genes[bestTask]=bestVm;
     }
 
     /**
