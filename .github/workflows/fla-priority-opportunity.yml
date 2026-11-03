@@ -1,0 +1,126 @@
+name: FLA Runtime Ready-Queue Dispatch Opportunity Mechanism
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-opportunity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  opportunity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workflow: Sipht_60
+            mapping: stride7
+          - workflow: Sipht_60
+            mapping: round_robin
+          - workflow: CyberShake_100
+            mapping: round_robin
+          - workflow: Montage_100
+            mapping: stride7
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable uninstrumented exact-assignment source outcomes
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41679712071
+          github-token: ${{ github.token }}
+          pattern: fla-ready-runtime-priority-${{ matrix.workflow }}-41679712071
+          path: original
+      - name: Build clean Java sources and check FIFO scheduler isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.scheduling.FLAFixedVmReadyPriorityTest | tee reports/priority-oracle.log
+      - name: Run 3 actually simulated policies at fixed VM mapping, tracing competing idle-VM jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for priority in fifo shortest upward; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.fixedTaskTrace=true -Ddagfla.readyQueueDiagnostic=true \
+              -Ddagfla.priorityOpportunityTrace=true \
+              -Ddagfla.fixedVmReadyPriority="$priority" \
+              -Dliwsa.vmSpeedProfile=default \
+              -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAReadyQueueCrossDagAudit \
+              '${{ matrix.workflow }}' "reports/${priority}.csv" '${{ matrix.mapping }}' \
+              > "reports/${priority}.log" 2>&1 || {
+                tail -90 "reports/${priority}.log"
+                exit 1
+              }
+          done
+          python3 - <<'PY'
+          import csv,math,pathlib
+          root=pathlib.Path("reports")
+          def load(path):
+            with path.open(newline='') as f:return list(csv.DictReader(f))
+          source=list(pathlib.Path('original').rglob('all_policy_pairs.csv'))
+          assert len(source)==1,[str(x) for x in source]
+          archive=load(source[0])
+          data=[]
+          for mode in ('fifo','shortest','upward'):
+            observed=load(root/f'{mode}.csv')
+            assert len(observed)==1 and observed[0]['policy']=='${{ matrix.mapping }}'
+            a=observed[0]
+            if mode=='fifo':
+              past=next(r for r in archive if r['assignment_policy']=='${{ matrix.mapping }}')
+              reference=(past['fifo_actual_makespan'],past['fifo_actual_cost'])
+            else:
+              past=next(r for r in archive if r['assignment_policy']=='${{ matrix.mapping }}' and r['runtime_priority']==mode)
+              reference=(past['priority_actual_makespan'],past['priority_actual_cost'])
+            for actual,ref in zip((a['actual_makespan'],a['actual_cost']),reference):
+              assert math.isclose(float(actual),float(ref),rel_tol=1e-6,abs_tol=1e-6),(mode,actual,ref)
+            lines=(root/f'{mode}.log').read_text().splitlines()
+            observations=[]
+            for line in lines:
+              if not line.startswith('PRIORITY_OPPORTUNITY,'):continue
+              parts=line.split(',')
+              assert len(parts)==8,parts
+              _,event_mode,clock,vm,depth,fifo,chosen,changed=parts
+              assert event_mode==mode
+              t=float(clock)
+              assert math.isfinite(t) and t>=0
+              assert int(depth)>=2 and int(vm)>=0 and int(fifo)>0 and int(chosen)>0
+              assert int(changed)==int(fifo!=chosen)
+              observations.append(parts)
+            with (root/f'{mode}_idle_vm_opportunities.csv').open('w',newline='') as f:
+              w=csv.writer(f)
+              w.writerow(['event','mode','simulation_clock','vm_id','candidate_count','fifo_task_id','chosen_task_id','changed'])
+              w.writerows(observations)
+            data.append(dict(workflow=a['workflow'],mapping=a['policy'],priority=mode,
+                             actual_makespan=a['actual_makespan'],actual_cost=a['actual_cost'],
+                             idle_vm_competitions=len(observations),
+                             changed_first_choices=sum(int(x[-1]) for x in observations),
+                             max_competing_jobs=max([int(x[4]) for x in observations],default=0)))
+          assert len(data)==3
+          with (root/'dispatch_opportunity_summary.csv').open('w',newline='') as f:
+            w=csv.DictWriter(f,fieldnames=list(data[0]));w.writeheader();w.writerows(data)
+          out=['# Runtime priority actual dispatch opportunities on frozen placements','',
+            'Three original fixed-mapping real simulator replays reproduced historical nontrace Makespan and Cost within 1e-6 relative tolerance.',
+            '| Runtime policy | Idle-VM multi-job opportunities | Changed actual first choice vs FIFO | Largest ready compute queue | Actual makespan (s) |',
+            '|---|---:|---:|---:|---:|']
+          for r in data:
+            out.append(f"| {r['priority']} | {r['idle_vm_competitions']} | {r['changed_first_choices']} | {r['max_competing_jobs']} | {float(r['actual_makespan']):.6f} |")
+          out+=['','This is a mechanistic case study chosen after observing previous outcomes, not an unseen holdout or proof of superiority.']
+          (root/'dispatch_opportunity_report.md').write_text('\n'.join(out)+'\n')
+          print('\n'.join(out))
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cat reports/dispatch_opportunity_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain observed decisions, simulator truth and original parity logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-opportunity-${{ matrix.workflow }}-${{ matrix.mapping }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
