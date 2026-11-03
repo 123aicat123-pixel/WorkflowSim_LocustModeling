@@ -568,3 +568,26 @@ V12 mitigated the v11 performance collapse on Sipht_100 in the observed developm
 The earlier v12 workflow run `41571402736` accidentally used the nonexisting control label `v12-bandit` instead of `v11-bandit`, and must NOT be used as evidence. The corrected run above used the actual v11 and v12 variants and completed successfully.
 
 We also added a **separate triple-arm variant-held-out fairness comparison** (`fla-v12-heldout-fairness.yml`), targeting Epigenomics_100 and Inspiral_100, three seeds each. It directly checks identical two initial low-cost task assignments for v7, v12 and cost-seeded NSGA-II, 3030 fitness evaluations each, and a shared frozen simulator reference. This later verification must be examined **before** promoting v12 beyond an exploratory development variant. These workflow families were studied in prior research and therefore are not an entirely untouched publication dataset.
+
+
+## V12 three-arm variant-held-out result (Epigenomics and Inspiral, 2026-11-03)
+
+The v12 continuous *planning*-Pareto-HV feedback bandit was held fixed after the CyberShake/Montage/Sipht 9-case development pilot (v12 vs v7 +1.433%, 5/9 better cases). To check transfer to more workflows, six additional experiments used Epigenomics_100 and Inspiral_100 × 3 seeds, each with the same 100 tasks, population 30, 100 generations and **3030 objective-search evaluations** for all three arms:
+
+- DAG-Pareto-FLA[v7-costseed] (unchanged control).
+- DAG-Pareto-FLA[v12-hvbandit] (continuous-HV feedback; fixed parameters).
+- NSGA-II[costseed] (fairly receives EXACTLY the same first two deterministic low-cost assignments).
+
+Real WorkflowSim simulations replayed the recorded planned-nondominated candidates and a SINGLE 1.05 frozen HV reference point was shared across the three arms and all seeds in each workflow. The exact-match initial-seed assertions passed for **both** seeded FLA variants versus seeded NSGA-II.
+
+| Additional family | v12 relative simulated HV versus v7 | v12 relative HV versus equally cost-seeded NSGA-II |
+|---|---:|---:|
+| Epigenomics_100 | +4.701% (3/3 wins) | +3.631% (3/3 wins) |
+| Inspiral_100 | +1.743% (2/3 wins) | +0.082% (1/3 wins) |
+| **All six paired cases** | **+3.222% (5/6 wins)** | **+1.856% (4/6 wins)** |
+
+[Actual triple-arm GitHub Actions matrix, cost-seed identity assertions, 3030-evaluation logs, simulator replay CSVs and frozen-HV summary](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41572223937).
+
+**Interpretation:** v12 shows a positive *variant-held-out* mean improvement compared with v7, and a small positive mean compared with identically initialized NSGA-II. This is a **promising but statistically weak 6-case result**. These two DAG families were already used in earlier research; no truly untouched publication validation exists. The Inspiral seed wins are mixed; this should NOT be reported as significant or broad FLA superiority.
+
+An expanded five-family, five-seed, three-arm same-initialization confirmation has been triggered in workflow `fla-v12-full-fairness.yml`. Its result and sampling limitations must be checked before making a stronger claim. Note that v12's UCB reward is derived from the PLANNING Pareto archive, not actual WorkflowSim feedback during optimization. Recorded fronts remain planned-nondominated replays, not all evaluated-schedule simulator Pareto fronts.
