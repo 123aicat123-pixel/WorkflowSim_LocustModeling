@@ -1,0 +1,138 @@
+name: FLA Fixed-VM Runtime Ready-Job Priority Pilot
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-runtime-priority-pilot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  fixed-mapping-priority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [CyberShake_100, Montage_100, Sipht_60]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen historical default FIFO replay where available
+        if: matrix.workflow != 'CyberShake_100'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41669662253
+          github-token: ${{ github.token }}
+          pattern: fla-ready-cross-${{ matrix.workflow }}-41669662253
+          path: original
+      - name: Clean Java compile and queue-order safety tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.scheduling.FLAFixedVmReadyPriorityTest | tee reports/priority-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/decoder-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/stagein-regression.log
+      - name: Run same frozen VM assignments with three runtime ready-job policies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in fifo shortest upward; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.fixedTaskTrace=true \
+              -Ddagfla.readyQueueDiagnostic=true \
+              -Ddagfla.fixedVmReadyPriority="$mode" \
+              -Dliwsa.vmSpeedProfile=default \
+              -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAReadyQueueCrossDagAudit \
+              '${{ matrix.workflow }}' "reports/${mode}.csv" \
+              > "reports/${mode}.log" 2>&1 || {
+                tail -100 "reports/${mode}.log"
+                exit 1
+              }
+          done
+          python3 - <<'PY'
+          import csv, math, pathlib, statistics
+          root=pathlib.Path("reports")
+          policies=("fifo","shortest","upward")
+          expected={"all_vm0","all_vm12","round_robin","stride7"}
+          def read(path):
+            with path.open(newline="") as f:return list(csv.DictReader(f))
+          groups={policy:{r["policy"]:r for r in read(root/f"{policy}.csv")} for policy in policies}
+          for policy,rows in groups.items():
+            assert set(rows)==expected,(policy,list(rows))
+            assert all(r["seed"]=="509" and r["speed"]=="default" and r["workflow"]=='${{ matrix.workflow }}' for r in rows.values())
+          changed=[]
+          for placement in sorted(expected):
+            ref=groups["fifo"][placement]
+            for policy in policies[1:]:
+              alt=groups[policy][placement]
+              assert ref["task_count"]==alt["task_count"]
+              for field in ("old_plan_makespan","new_ready_makespan","old_plan_cost","new_ready_cost"):
+                a,b=float(ref[field]),float(alt[field])
+                assert math.isclose(a,b,rel_tol=1e-9,abs_tol=1e-6),(placement,policy,field,a,b)
+              for metric in ("actual_makespan","actual_cost"):
+                assert all(math.isfinite(float(x[metric])) and float(x[metric])>0 for x in (ref,alt))
+              m0,m1=float(ref["actual_makespan"]),float(alt["actual_makespan"])
+              c0,c1=float(ref["actual_cost"]),float(alt["actual_cost"])
+              changed.append(dict(workflow=ref["workflow"],seed=ref["seed"],assignment_policy=placement,
+                runtime_priority=policy,fifo_actual_makespan=m0,priority_actual_makespan=m1,
+                makespan_delta_pct=100*(m1/m0-1),fifo_actual_cost=c0,priority_actual_cost=c1,
+                cost_delta_pct=100*(c1/c0-1)))
+          # Reproducibility gate: match identical original FIFO replays from
+          # untouched historical static scheduling before priority control.
+          if '${{ matrix.workflow }}'!='CyberShake_100':
+            historical=list(pathlib.Path("original").rglob("default.csv"))
+            assert len(historical)==1,[str(p) for p in historical]
+            old={r["policy"]:r for r in read(historical[0])}
+            assert set(old)==expected
+            for placement in expected:
+              x=old[placement];y=groups["fifo"][placement]
+              for k in ("actual_makespan","actual_cost","old_plan_makespan","old_plan_cost"):
+                a,b=float(x[k]),float(y[k])
+                assert math.isclose(a,b,rel_tol=1e-6,abs_tol=1e-6),(placement,k,a,b)
+            print("PASS archived untouched WorkflowSim FIFO parity",'${{ matrix.workflow }}')
+          with (root/"all_policy_pairs.csv").open("w",newline="") as f:
+            w=csv.DictWriter(f,fieldnames=list(changed[0]))
+            w.writeheader();w.writerows(changed)
+          lines=["# Fixed genotype, actual WorkflowSim runtime ready-job priority intervention",
+           "", "Protocol frozen in docs/FLA_RUNTIME_PRIORITY_FROZEN_PILOT_2026-11-04.md before outcomes.",
+           "Four identical VM mappings, FIFO/shortest/upward actual simulator runs; all planned objectives and original Task ID->VM identity unchanged.",
+           "",
+           "| Runtime policy | Better actual makespan | Tied | Worse | Mean signed Δ makespan | Max absolute Δ makespan | Mean signed Δ cost |",
+           "|---|---:|---:|---:|---:|---:|---:|"]
+          for policy in policies[1:]:
+            z=[r for r in changed if r["runtime_priority"]==policy]
+            deltas=[r["makespan_delta_pct"] for r in z]
+            costs=[r["cost_delta_pct"] for r in z]
+            wins=sum(v< -1e-6 for v in deltas)
+            ties=sum(abs(v)<=1e-6 for v in deltas)
+            losses=sum(v>1e-6 for v in deltas)
+            lines.append(f"| {policy} | {wins} | {ties} | {losses} | "
+               f"{statistics.mean(deltas):+.6f}% | {max(abs(v) for v in deltas):.6f}% | "
+               f"{statistics.mean(costs):+.6f}% |")
+          lines+=["","## Every frozen mapping and alternative priority"]
+          for r in changed:
+            lines.append(f"- {r['assignment_policy']} + {r['runtime_priority']}: "
+                 f"actual makespan={r['priority_actual_makespan']:.6f}s, "
+                 f"FIFO={r['fifo_actual_makespan']:.6f}s, "
+                 f"Δ={r['makespan_delta_pct']:+.6f}%; Cost Δ={r['cost_delta_pct']:+.6f}%")
+          lines+=["","This is a small known-DAG feasibility intervention, not a new FLA optimization result. "
+            "An oracle choosing the best observed policy after seeing true simulator outcomes is invalid. "
+            "Only a predeclared optimizer jointly searching VM mappings and a priority policy, with fair baseline and unseen-DAG tests, could establish an algorithm contribution."]
+          (root/"priority_pilot_report.md").write_text("\n".join(lines)+"\n")
+          print("\n".join(lines))
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_RUNTIME_PRIORITY_FROZEN_PILOT_2026-11-04.md reports/frozen-protocol.md
+          cat reports/priority_pilot_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all real per-policy simulator results, FIFO parity and logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-ready-runtime-priority-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
