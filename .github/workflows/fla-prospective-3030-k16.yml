@@ -1,0 +1,169 @@
+name: Prospective FLA 3030-evaluation 16-simulator-call research pilot
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-prospective-3030-k16.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fixed-budget:
+    name: Real 3030xK16 ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, Inspiral_50, CyberShake_100]
+        seed: [53, 54]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and record source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Real prospective search with fixed 3030 planner calls and 16 simulator replay calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.budgetReplayK=16 \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            'Output&Results/pros3030_${{ matrix.workflow }}_s${{ matrix.seed }}' \
+            v12-fair-pair 2>&1 | tee ci-logs/experiment.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/experiment.log
+          test "$(grep -c 'PASS prospective planned-only replay selection K=16' ci-logs/experiment.log)" -eq 3
+      - name: Assert genuine optimization count, simulator budget, independent replay and source record
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math,collections
+          p='Output&Results/pros3030_${{ matrix.workflow }}_s${{ matrix.seed }}'
+          def read(s):
+              with open(p+s,newline='') as f:return list(csv.DictReader(f))
+          rows=read('_summary.csv');replays=read('_replays.csv')
+          expected={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(rows)==3 and {r['algorithm'] for r in rows}==expected
+          assert all(int(r['evaluations'])==int(r['captured_evaluations'])==3030 for r in rows)
+          assert all(int(r['replayed'])==16 for r in rows)
+          assert len(replays)==48
+          counter=collections.Counter(r['algorithm'] for r in replays)
+          assert all(counter[a]==16 for a in expected)
+          assert all(int(r['distinct_observed'])>=16 for r in rows)
+          for r in replays:
+              assert math.isfinite(float(r['sim_makespan'])) and float(r['sim_makespan'])>0
+              assert math.isfinite(float(r['sim_cost'])) and float(r['sim_cost'])>0
+              for name in ('makespan','cost'):
+                  a=float(r['planned_'+name]);b=float(r['independent_planned_'+name])
+                  assert abs(a-b)<=1e-6*max(1,abs(b))
+          assert pathlib.Path(p+'_budget_protocol.txt').read_text().find('PROSPECTIVE_REPLAY_BUDGET_K=16')>=0
+          print('PASS genuine 3030 solver evaluations x3 and exactly 16 real WorkflowSim calls each')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prospective3030-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/pros3030_${{ matrix.workflow }}_s${{ matrix.seed }}_*
+          retention-days: 90
+  summary:
+    name: 3030xK16 fixed-budget front comparison
+    needs: fixed-budget
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: prospective3030-*-${{ github.run_id }}
+          path: input
+      - name: Validate case coverage and compare common family reference HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,pathlib,collections,statistics,math
+          paths=list(pathlib.Path('input').rglob('*_replays.csv'))
+          summaries=list(pathlib.Path('input').rglob('*_summary.csv'))
+          assert len(paths)==len(summaries)==6,(len(paths),len(summaries))
+          names=['DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]']
+          fams=['CyberShake_100','Inspiral_50','Montage_25']
+          data=collections.defaultdict(list)
+          for p in paths:
+              with p.open(newline='') as f:
+                  rows=list(csv.DictReader(f))
+              assert len(rows)==48
+              for r in rows:
+                  key=r['workflow'],int(r['seed']),r['algorithm']
+                  assert key[0] in fams and key[1] in (53,54) and key[2] in names
+                  point=float(r['sim_makespan']),float(r['sim_cost'])
+                  assert all(math.isfinite(v) and v>0 for v in point)
+                  data[key].append(point)
+          assert len(data)==18 and all(len(v)==16 for v in data.values())
+          for p in summaries:
+              with p.open(newline='') as f:rows=list(csv.DictReader(f))
+              assert len(rows)==3
+              assert all(int(r['evaluations'])==int(r['captured_evaluations'])==3030 and int(r['replayed'])==16 for r in rows)
+          def nd(points):
+              pts=sorted(set(points))
+              return [p for p in pts if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in pts)]
+          def hv(points,ref):
+              last,total=ref[1],0.
+              for m,c in nd(points):
+                  if m<ref[0] and c<last:
+                      total+=(ref[0]-m)*(last-c)
+                      last=c
+              return total
+          refs={}
+          for wf in fams:
+              pts=[p for key,v in data.items() if key[0]==wf for p in v]
+              refs[wf]=max(p[0] for p in pts)*1.05+1,max(p[1] for p in pts)*1.05+1
+          scores=[]
+          report=['# Prospectively enforced 3030 planning evaluations / 16 real simulator replays',
+              '', '3 workflow families x 2 paired seeds x 3 solvers. Actual WorkflowSim simulator replays: K=16 PER SOLVER PER CASE.',
+              'All solver arms have identical first two cost-seed schedules. No full-history oracle replays were performed in this pilot.',
+              'Family-wise HV reference computed from ONLY the K-selected points across both seeds/all three solver arms; shared within family but not preregistered.',
+              'Search budget equality and fixed simulation budget equality were checked in GitHub Actions.',
+              'Numbers describe selected K-point fronts, NOT the full search-history Pareto fronts, and do NOT prove better search algorithms.',
+              '', '| Workflow | Seed | v12 versus NSGA-II selected-HV difference | v12 versus v7 difference | Best solver |',
+              '|---|---:|---:|---:|---|']
+          comparisons=[]
+          for wf in fams:
+              for seed in (53,54):
+                  vals={}
+                  for alg in names:
+                      value=hv(data[(wf,seed,alg)],refs[wf])
+                      vals[alg]=value
+                      scores.append(dict(workflow=wf,seed=seed,algorithm=alg,K=16,planning_evaluations=3030,
+                          simulator_hv=value,ref_m=refs[wf][0],ref_c=refs[wf][1]))
+                  d=100*(vals[names[1]]/max(1e-12,vals[names[2]])-1)
+                  d7=100*(vals[names[1]]/max(1e-12,vals[names[0]])-1)
+                  comparisons.append((d,d7))
+                  report.append(f'| {wf} | {seed} | {d:+.3f}% | {d7:+.3f}% | {max(names,key=lambda name:vals[name])} |')
+          report+=['',f'Mean paired v12 vs seeded NSGA-II relative HV difference: {statistics.mean(x[0] for x in comparisons):+.3f}%.',
+              f'Mean paired v12 vs v7 difference: {statistics.mean(x[1] for x in comparisons):+.3f}%.',
+              'Only six paired cases; no significance or broad superiority claim.',
+              'Next: equal-K alternative screening policy control, larger seeds and genuine wall-clock profiling.']
+          pathlib.Path('reports/prospective3030_report.md').write_text('\n'.join(report)+'\n')
+          with pathlib.Path('reports/prospective3030_hv.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(scores[0]));w.writeheader();w.writerows(scores)
+          print('\n'.join(report))
+          PY
+          cat reports/prospective3030_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prospective3030-aggregate-${{ github.run_id }}
+          path: reports
+          retention-days: 90
