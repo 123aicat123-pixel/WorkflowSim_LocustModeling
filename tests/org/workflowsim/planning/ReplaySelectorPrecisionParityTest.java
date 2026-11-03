@@ -30,6 +30,8 @@ public final class ReplaySelectorPrecisionParityTest {
         constructor.setAccessible(true);
         Method selection = experiment.getDeclaredMethod("budgetedPlannedCoverage", List.class, int.class);
         selection.setAccessible(true);
+        Method scalarSelection = experiment.getDeclaredMethod("budgetedScalarSweep", List.class, int.class);
+        scalarSelection.setAccessible(true);
         Field assignment = candidate.getDeclaredField("assignment");
         assignment.setAccessible(true);
 
@@ -65,6 +67,17 @@ public final class ReplaySelectorPrecisionParityTest {
                     ids.append(mapping.get(1));
                 }
                 System.out.println("PARITY|" + group.getKey() + "|" + k + "|" + ids);
+                @SuppressWarnings("unchecked")
+                List<Object> swept = (List<Object>) scalarSelection.invoke(null, group.getValue(), k);
+                if(swept.size()!=k)throw new IllegalStateException("Wrong scalar sweep size "+k);
+                StringBuilder scalarIds=new StringBuilder();
+                for(Object item:swept) {
+                    @SuppressWarnings("unchecked")
+                    Map<Integer,Integer> mapping = (Map<Integer,Integer>) assignment.get(item);
+                    if(scalarIds.length()!=0)scalarIds.append(",");
+                    scalarIds.append(mapping.get(1));
+                }
+                System.out.println("PARITYSWEEP|" + group.getKey() + "|" + k + "|" + scalarIds);
             }
         }
     }
