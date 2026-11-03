@@ -1,0 +1,45 @@
+name: Pinned 20-case DAG100 online observed-HV two-cohort robustness synthesis
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-online-two-cohorts.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  synthesis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve first full real simulator cohort 95-96 from exact archived run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41597521884
+          github-token: ${{ github.token }}
+          pattern: causal-factorial100-k16-report-41597521884
+          path: originals/old
+      - name: Retrieve second full real simulator cohort 101-102 from exact archived run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41600766954
+          github-token: ${{ github.token }}
+          pattern: online-runtime100-k16-report-41600766954
+          path: originals/new
+      - name: Check all 20 paired workflow/seed cases and family-exclusion robustness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_online_cohort_synthesis.py originals reports 2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          printf '%s\n' 'Original real WorkflowSim run A: 41597521884' 'Original real WorkflowSim run B: 41600766954' > reports/original_runs.txt
+          cat reports/online_two_cohorts_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: online-two-cohorts-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
