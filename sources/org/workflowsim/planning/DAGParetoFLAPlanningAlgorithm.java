@@ -55,6 +55,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_NOVELTY_REPAIR = false;
     public static boolean CONFIG_NOVELTY_GLOBAL_HISTORY = false;
     public static boolean CONFIG_NOVELTY_STRONG_REPAIR = false;
+    /** V7 controlled exploration: low-rental-price initialization and low-cost archive guidance. */
+    public static boolean CONFIG_COST_SEEDING = false;
+    public static boolean CONFIG_COST_EXTREME_GUIDANCE = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -118,6 +121,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useResourceAwareMutation, useArchiveRecombination, useParetoCrowdingSelection;
     private final boolean useArchiveDagBlock, usePreferenceDonor;
     private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
+    private final boolean useCostSeeding, useCostExtremeGuidance;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -155,6 +159,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useNoveltyRepair = CONFIG_NOVELTY_REPAIR;
         useGlobalHistory = CONFIG_NOVELTY_GLOBAL_HISTORY;
         useStrongRepair = CONFIG_NOVELTY_STRONG_REPAIR;
+        useCostSeeding = CONFIG_COST_SEEDING;
+        useCostExtremeGuidance = CONFIG_COST_EXTREME_GUIDANCE;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -182,7 +188,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
-        if (useResourceAwareMutation) prepareResourceHeuristic();
+        if (useResourceAwareMutation || useCostSeeding) prepareResourceHeuristic();
         if (!useDag) { Arrays.fill(importance, 1.0); }
         random = seed == null ? new Random() : new Random(seed);
         group1Size = (populationSize + 1) / 2;
@@ -247,6 +253,12 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     ref = useArchiveSso && !archive.isEmpty()
                             ? chooseArchiveLeader(isG1 ? alpha1 : 1.0 - alpha1)
                             : (isG1 ? leader1 : leader2);
+                }
+                if (useCostExtremeGuidance && !isG1 && !archive.isEmpty()
+                        && random.nextDouble() < 0.35) {
+                    // Controlled cost-tail pressure: sampling this elite does not
+                    // itself evaluate a solution or change the search budget.
+                    ref = minimumCostArchive();
                 }
                 int[] genes = current.genes.clone();
                 if(useImmigrants && random.nextDouble()<0.10) {
@@ -361,6 +373,32 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 System.err.println("DAG-Pareto-FLA skipped invalid warm-start: "+ex.getMessage());
             }
         }
+        if (useCostSeeding && list.size() < populationSize) {
+            // Replace random initialization, not add fitness calls: task-local
+            // optimistic service time multiplied by the actual VM unit price.
+            int[] priceEfficient = new int[n];
+            for(int k=0;k<n;k++){
+                int best=allowed[k][0];
+                double lowest=Double.POSITIVE_INFINITY;
+                for(int v:allowed[k]){
+                    double score=optimisticServiceSeconds[k][v]*vmList.get(v).getCost();
+                    if(score<lowest){lowest=score;best=v;}
+                }
+                priceEfficient[k]=best;
+            }
+            list.add(new Solution(priceEfficient,evaluator.evaluate(priceEfficient)));
+        }
+        if (useCostSeeding && list.size() < populationSize) {
+            // Alternative very low-cost-rate policy: a VM may be slower and
+            // thus costlier overall; this is a proposal, not a claimed optimum.
+            int[] lowRate=new int[n];
+            for(int k=0;k<n;k++){
+                int best=allowed[k][0];
+                for(int v:allowed[k])if(vmList.get(v).getCost()<vmList.get(best).getCost())best=v;
+                lowRate[k]=best;
+            }
+            list.add(new Solution(lowRate,evaluator.evaluate(lowRate)));
+        }
         while(list.size() < populationSize) {
             int[] g = new int[n];
             for(int k=0;k<n;k++) {
@@ -427,6 +465,16 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         double w1=1.0/(preference(distinct.get(0),a,bounds)+0.1);
         double w2=1.0/(preference(distinct.get(1),a,bounds)+0.1);
         return random.nextDouble()*(w1+w2)<w1?distinct.get(0):distinct.get(1);
+    }
+
+    /** Lowest evaluated cost currently available in the nondominated archive. */
+    private Solution minimumCostArchive() {
+        Solution best=archive.get(0);
+        for(Solution s:archive) {
+            if(s.cost<best.cost || (s.cost==best.cost && s.makespan<best.makespan))
+                best=s;
+        }
+        return best;
     }
 
     private Solution chooseArchiveLeader(double a) {
