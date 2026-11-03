@@ -82,6 +82,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_PARETO_GATED_LOCAL_SURVIVOR = false;
     /** Passive per-generation selected-population diagnostics, OFF by default. */
     public static boolean CONFIG_POPULATION_DIAGNOSTICS = false;
+    /** v18 candidate: FLA-specific disagreement-targeted single-task relocation; OFF by default. */
+    public static boolean CONFIG_DISAGREEMENT_RELOCATION = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -176,6 +178,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private int[][] allowed;
     private double[] importance;
     private double[][] optimisticServiceSeconds;
+    private boolean useDisagreementRelocation;
+    private StageInAwareScheduleEvaluator disagreementInsertion;
+    private ReadyQueueScheduleEvaluator disagreementReady;
+    private int disagreementMoves;
+    private int disagreementProposals;
     private int[] dagEdgeParent, dagEdgeChild;
     private double[] dagEdgeWeight;
     private int[][] criticalParentIndices;
@@ -224,6 +231,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             throw new IllegalArgumentException("Invalid paired generation window");
         paretoGatedLocalSurvivor=CONFIG_PARETO_GATED_LOCAL_SURVIVOR;
         collectPopulationDiagnostics=CONFIG_POPULATION_DIAGNOSTICS;
+        useDisagreementRelocation=CONFIG_DISAGREEMENT_RELOCATION;
         if(paretoGatedLocalSurvivor && pairedLocalSearchMode==0)
             throw new IllegalArgumentException("Pareto local gate requires paired local trials");
         if(pairedLocalSearchMode<0 || pairedLocalSearchMode>4)
@@ -259,7 +267,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
-        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0 || usePhaseOperatorBandit || pairedLocalSearchMode!=0) prepareResourceHeuristic();
+        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0 || usePhaseOperatorBandit || pairedLocalSearchMode!=0 || useDisagreementRelocation) prepareResourceHeuristic();
+        if(useDisagreementRelocation) {
+            disagreementInsertion=new StageInAwareScheduleEvaluator(taskOrder,vmList);
+            disagreementReady=new ReadyQueueScheduleEvaluator(taskOrder,vmList);
+        }
         if (criticalRelocationMode != 0 || usePhaseOperatorBandit) prepareCriticalProxy();
         if (edgeRelocationMode != 0 || usePhaseOperatorBandit) prepareDagEdgeRelocation();
         if (!useDag) { Arrays.fill(importance, 1.0); }
@@ -440,6 +452,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                             } else criticalRelocate(genes);
                         }
                     }
+                }
+                if(useDisagreementRelocation && random.nextDouble()<0.35) {
+                    disagreementProposals++;
+                    if(disagreementRelocate(genes,isG1))disagreementMoves++;
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
                 // Passive fidelity audit: proxy uses NO target fitness calls;
@@ -913,6 +929,57 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         double r = random.nextDouble();
         genes[k] = (r < 0.75 || second < 0) ? best
                 : (r < 0.95 || third < 0) ? second : third;
+    }
+
+
+    /**
+     * Research-only FLA proposal, NOT a second target fitness evaluation:
+     * select the task whose planned start differs most across the independent
+     * insertion and event-driven ready-queue models on this genotype.
+     * Relocate ONE eligible task to a load/service-cost alternative VM.
+     * No future WorkflowSim labels, no additional search fitness calls.
+     *
+     * This models task-order uncertainty as a relocation target, not as a
+     * learned oracle or as a universal decoder replacement. Wall time and
+     * proposal/move counts must be reported separately.
+     */
+    private boolean disagreementRelocate(int[] genes,boolean latencyFocused) {
+        Map<Integer,Integer> assignment=evaluator.toAssignment(genes);
+        StageInAwareScheduleEvaluator.Result insertion=disagreementInsertion.evaluate(assignment);
+        ReadyQueueScheduleEvaluator.Result queue=disagreementReady.evaluate(assignment);
+        int task=-1;
+        double discrepancy=1e-8;
+        for(int k=0;k<n;k++) {
+            if(allowed[k].length<2)continue;
+            double candidate=Math.abs(insertion.starts[k]-queue.starts[k]);
+            if(candidate>discrepancy) {
+                discrepancy=candidate;
+                task=k;
+            }
+        }
+        if(task<0)return false;
+        double[] load=new double[vmList.size()];
+        for(int k=0;k<n;k++) {
+            if(k!=task)load[genes[k]]+=optimisticServiceSeconds[k][genes[k]];
+        }
+        int best=-1;
+        double bestScore=Double.POSITIVE_INFINITY;
+        for(int vm:allowed[task]) {
+            if(vm==genes[task])continue;
+            double service=optimisticServiceSeconds[task][vm];
+            double score=latencyFocused
+                ?service+load[vm]
+                :service*vmList.get(vm).getCost()+
+                    0.02*load[vm]*vmList.get(vm).getCost();
+            if(score<bestScore-1e-12||
+                    (Math.abs(score-bestScore)<=1e-12&&(best<0||vm<best))) {
+                bestScore=score;
+                best=vm;
+            }
+        }
+        if(best<0)return false;
+        genes[task]=best;
+        return true;
     }
 
 
