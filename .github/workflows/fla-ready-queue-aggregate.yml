@@ -1,0 +1,41 @@
+name: Read-only Ready-Queue First Gate Aggregate
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-ready-queue-aggregate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable original 16 actual simulator replays
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41668888545
+          github-token: ${{ github.token }}
+          pattern: fla-ready-queue-*-41668888545
+          path: original
+      - name: Deduplicate physical schedules and measure Cost / task MAE
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_ready_queue_first_gate_aggregate.py
+          python3 scripts/fla_ready_queue_first_gate_aggregate.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-sha.txt
+          echo 'Original true simulator Actions: 41668888545' > reports/original-run-id.txt
+          cat reports/ready_queue_first_gate_aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all outcomes and aggregated results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-ready-queue-first-aggregate-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
