@@ -423,3 +423,40 @@ The relative benefit of giving low-cost seeds to FLA is also not stable across w
 [Six corrected held-out factorial runs, identical-seed assertion, exact evaluation counts, full replay CSV and report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41565588764).
 
 This finding reinforces the publication constraint: **cost-efficient initialization is a useful transferable heuristic but not, by itself, a demonstrated FLA-specific search contribution**. Both variants should remain separately labeled, and the negative result must be retained.
+
+
+## v9 DAG-edge operators and fair-seeded Pareto geometry (2026-11-03)
+
+**Proposed v9 operators** are optional FLA-only gene edits: co-locate high-transfer DAG parent/child jobs on one VM, separate co-located parent/child jobs to increase potential parallelism, or choose by the FLA objective-preference subgroup. They are NOT from the original FLA equations and are OFF unless explicitly selected. They never add a separate fitness call. A dedicated Java/WorkflowSim test checked actual assignment changes in 8×6 experiments: 56 evaluations per solver, **0** edge-change events for v7, **11** for v9-colocate, **20** for v9-separate and **17** for v9-adaptive. [Activation and budget assertions](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41566984094).
+
+**Development set:** CyberShake_100, Montage_100, Sipht_100, seeds 1–3, population 30, generations 100, 3030 evaluations per candidate algorithm, same simulator-HV reference per family, independent WorkflowSim replay.
+
+| Operator versus v7-costseed | Average paired HV across nine runs | Positive runs |
+|---|---:|---:|
+| v9-colocate | **+0.665%** | 5/9 |
+| v9-separate | **−3.360%** | 3/9 |
+| v9-adaptive | **−0.569%** | 6/9 |
+
+v9-colocate was chosen *on the development set only* for extra-family testing. The extra-family test covered Epigenomics_100 and Inspiral_100, each seeds 1–3, unchanged 3030 evaluations and true WorkflowSim replay.
+
+| Additional workflow family | v9-colocate paired HV versus v7 |
+|---|---:|
+| Epigenomics_100 | **−2.574%** |
+| Inspiral_100 | **−0.125%** |
+| **All six extra-family pairs** | **−1.350%, 1/6 positive** |
+
+**v9 REJECTED** as a replacement: development-set improvement does not generalize to the two extra families. Do not label the v9 operators as a demonstrated performance contribution, and keep them opt-in and disabled by default.
+
+[Development run and full CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41566649425) · [Extra-family validation](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41567315386).
+
+**Diagnosis using the existing complete 25-case identically cost-seeded FLA v7 versus NSGA-II reference run** `41562247912`, without any new optimizer evaluations: compare 100-task DAGs × five paired seeds with the SAME initial two cost seed solutions, the SAME 3030 evaluation budget, and objective values from actual independent WorkflowSim replays. For each algorithm/seed, compute the simulator nondominated subset from the already-planned-screened replay candidates, minimum observed makespan, minimum observed cost, cross-front domination fraction and unique genotype fraction.
+
+- Across 25 paired cases, **FLA v7's minimum simulated makespan was on average 9.186% WORSE than identically cost-seeded NSGA-II**. The per-family differences were CyberShake +12.240%, Epigenomics +7.462%, Inspiral +15.016%, Montage +10.115%, Sipht +1.099%. Makespan is minimized, so all positive values are unfavorable to FLA.
+- Across all five families, **minimum observed cost was equal** between the two algorithms (average +0.000%), consistent with the shared low-cost starting assignments.
+- FLA's average simulator-nondominated front size was **45.96** points compared with seeded NSGA-II **48.92**. By contrast FLA actually explored **99.14% distinct VM assignments** versus seeded NSGA-II **93.54%**. Increasing assignment novelty alone is thus not an evidence-based repair.
+- The cross-front dominance fractions were mixed: 37.81% of replayed-FLA-front points were dominated by at least one seeded-NSGA front point, whereas 46.13% of seeded-NSGA points were dominated by a FLA point; HV and extreme objective coverage cannot be inferred from dominance counts alone.
+- These are **subset-front statistics**, NOT the globally achievable simulator Pareto front, because the original recorder replays only planning-nondominated visited schedules. The “makespan gap” is a practical diagnostic on the chosen benchmark procedure, not a proven mechanism or guaranteed optimizer weakness under exhaustive replay.
+
+**Engineering interpretation and next experiment:** The low-cost extreme is shared almost exactly thanks to identical initial cost seeds; FLA's harder challenge appears to be improving the **minimum makespan extreme** while maintaining cost Pareto quality, not generating more distinct assignments. Any proposed makespan-targeted operator must receive a separate controlled ablation and be compared to a similarly initialized NSGA-II, not only to a weaker unseeded baseline.
+
+[Immutable 25-case simulated-front geometry analysis and raw table](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41567489035).
