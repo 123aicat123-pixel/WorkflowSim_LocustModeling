@@ -105,6 +105,8 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
 
     /** Same semantics as LIWSAPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS. */
     public static List<Map<Integer, Integer>> CONFIG_SEED_ASSIGNMENTS = null;
+    /** Opt-in fairness counterfactual: v7-style cost seeds, defaults OFF. */
+    public static boolean CONFIG_COST_SEEDING = false;
     /**
      * Opt-in (default false). Same external Pareto archive that LIWSAPlanningAlgorithm offers, so that the
      * comparison can be run with every algorithm collecting its non-dominated solutions the same way.
@@ -642,6 +644,35 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
             population.add(g.clone());
         }
         int n = taskOrder.size();
+        if (CONFIG_COST_SEEDING && population.size() < populationSize) {
+            // Same two deterministic low-cost proposals as DAG-FLA v7:
+            // task execution + real external input stage-in, weighted by
+            // VM unit price. No objective calls or external warm-start data.
+            int[] priceEfficient=new int[n];
+            int[] lowRate=new int[n];
+            for(int k=0;k<n;k++){
+                Task task=taskOrder.get(k);
+                List<FileItem> files=task.getFileList();
+                double inputMb=0.0;
+                for(FileItem file:files) {
+                    if(file.getType()==Parameters.FileType.INPUT && file.isRealInputFile(files))
+                        inputMb+=file.getSize()/Consts.MILLION;
+                }
+                int best=0,cheap=0;
+                double lowest=Double.POSITIVE_INFINITY;
+                for(int v=0;v<vmList.size();v++){
+                    CondorVM vm=vmList.get(v);
+                    double service=task.getCloudletTotalLength()/vm.getMips()+inputMb/vm.getBw();
+                    double score=service*vm.getCost();
+                    if(score<lowest){lowest=score;best=v;}
+                    if(vm.getCost()<vmList.get(cheap).getCost())cheap=v;
+                }
+                priceEfficient[k]=best;
+                lowRate[k]=cheap;
+            }
+            population.add(priceEfficient);
+            if(population.size()<populationSize)population.add(lowRate);
+        }
         while (population.size() < populationSize) {
             int[] genotype = new int[n];
             for (int k = 0; k < n; k++) {
