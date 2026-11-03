@@ -78,6 +78,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static int CONFIG_PAIRED_LOCAL_SEARCH_MODE = 0; // 0=off,1=random control,2=timeline
     /** v15: replace strictly dominated local trial in survivor pool with its normal child. */
     public static boolean CONFIG_PARETO_GATED_LOCAL_SURVIVOR = false;
+    /** Passive per-generation selected-population diagnostics, OFF by default. */
+    public static boolean CONFIG_POPULATION_DIAGNOSTICS = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -113,6 +115,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public double finalAlpha1;
         public double finalDiversity;
         public List<double[]> searchTrace; // {iteration, archiveSize, bestM, bestCost, diversity}
+        /** One row for initialization plus one after every selected generation. */
+        public List<double[]> populationDiagnostics;
     }
 
     private static final class Solution {
@@ -151,11 +155,13 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
     private final int edgeRelocationMode, criticalRelocationMode, pairedLocalSearchMode;
-    private final boolean paretoGatedLocalSurvivor;
+    private final boolean paretoGatedLocalSurvivor, collectPopulationDiagnostics;
     private final boolean usePhaseOperatorBandit, usePhaseHvBandit, useJoinAwareRelocation;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
+    private final List<double[]> populationDiagnosticRows = new ArrayList<>();
+    private int archiveInsertionEvents;
     private final List<double[]> criticalProxyPairs = new ArrayList<>();
     private final int[][] banditUses = new int[3][3];
     private final int[][] banditAdmissions = new int[3][3];
@@ -211,6 +217,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useJoinAwareRelocation = CONFIG_JOIN_AWARE_RELOCATION;
         pairedLocalSearchMode=CONFIG_PAIRED_LOCAL_SEARCH_MODE;
         paretoGatedLocalSurvivor=CONFIG_PARETO_GATED_LOCAL_SURVIVOR;
+        collectPopulationDiagnostics=CONFIG_POPULATION_DIAGNOSTICS;
         if(paretoGatedLocalSurvivor && pairedLocalSearchMode==0)
             throw new IllegalArgumentException("Pareto local gate requires paired local trials");
         if(pairedLocalSearchMode<0 || pairedLocalSearchMode>2)
@@ -256,6 +263,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         group1 = new ArrayList<>(initial.subList(0, group1Size));
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
         archive.clear(); searchTrace.clear(); criticalProxyPairs.clear();
+        populationDiagnosticRows.clear();archiveInsertionEvents=0;
         doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0;
         joinRelocationAttempts=0; joinRelocationChanges=0;
         localTrials=0;localChanged=0;localDominates=0;localDominated=0;localIncomparable=0;localGateRejected=0;alpha1 = 0.85;
@@ -271,6 +279,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             for (Solution s : initial) globalVisited.add(Arrays.toString(s.genes));
         }
         saveTrace(0);
+        if(collectPopulationDiagnostics)
+            recordPopulationDiagnostics(0,-1,-1,archiveInsertionEvents,0,0,0,0);
 
         for (int t = 1; t <= generations; t++) {
             double tf = Math.sqrt(Math.sinh((double)t / generations));
@@ -296,6 +306,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             } else {
                 ssoCount++; phase = 2;
             }
+            final int archiveInsertedBefore=archiveInsertionEvents;
+            final int rejectedBefore=localGateRejected;
+            final int[] phaseArmUsesBefore=new int[]{banditUses[phase][0],banditUses[phase][1],banditUses[phase][2]};
             List<Solution> children1 = new ArrayList<>();
             List<Solution> children2 = new ArrayList<>();
             final Set<String> generationVisited;
@@ -485,6 +498,18 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 adaptPreference();
             }
             saveTrace(t);
+            if(collectPopulationDiagnostics){
+                List<Solution> generated=new ArrayList<>(children1);
+                generated.addAll(children2);
+                Set<String> uniqueGenerated=new HashSet<>();
+                for(Solution s:generated)uniqueGenerated.add(Arrays.toString(s.genes));
+                recordPopulationDiagnostics(t,phase,uniqueGenerated.size(),
+                        archiveInsertionEvents-archiveInsertedBefore,
+                        localGateRejected-rejectedBefore,
+                        banditUses[phase][0]-phaseArmUsesBefore[0],
+                        banditUses[phase][1]-phaseArmUsesBefore[1],
+                        banditUses[phase][2]-phaseArmUsesBefore[2]);
+            }
         }
         if (archive.isEmpty()) { throw new IllegalStateException("Empty Pareto archive"); }
         Solution chosen = archive.get(0);
@@ -546,6 +571,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.finalDiversity = hammingDiversity(population());
         m.searchTrace = new ArrayList<>();
         for (double[] a : searchTrace) { m.searchTrace.add(a.clone()); }
+        m.populationDiagnostics = new ArrayList<>();
+        for(double[] a:populationDiagnosticRows)m.populationDiagnostics.add(a.clone());
         lastRun = m;
         if(CONFIG_CRITICAL_LOCAL_AUDIT && criticalRelocationMode!=0)
             runCriticalLocalAudit();
@@ -570,6 +597,43 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             System.out.printf(java.util.Locale.ROOT,
                     "FLA_CRITICAL_PROXY_AUDIT samples=%d pearson=%.9f medianAbsolutePctError=%.9f%%%n",
                     m.criticalProxySamples,m.criticalProxyPearson,m.criticalProxyMedianAbsolutePctError);
+    }
+
+
+    /**
+     * Passive, deterministic measurement AFTER actual survivor selection.
+     * CSV row:
+     * generation,phase,selected_slots,selected_unique,selected_duplicate_slots,
+     * group1_unique,group2_unique,cross_group_overlap,
+     * pairwise_hamming_all,pairwise_hamming_group1,pairwise_hamming_group2,
+     * generated_unique,archive_insert_events,local_gate_rejections,
+     * bandit_baseline_uses,bandit_colocate_uses,bandit_critical_uses,
+     * archive_size,min_archive_makespan,min_archive_cost,objective_evaluations.
+     *
+     * FLA bandit uses for v14/v15 pairs are only NORMAL offspring, by design:
+     * the paired local second child does not activate a phase operator.
+     * Measurements are not saved into the optimizer's RNG or selection state.
+     */
+    private void recordPopulationDiagnostics(int generation,int phase,
+            int generatedUnique,int newAdmissions,int rejected,
+            int useBase,int useEdge,int useCritical) {
+        int[][] a=new int[group1.size()][];
+        int[][] b=new int[group2.size()][];
+        for(int i=0;i<a.length;i++)a[i]=group1.get(i).genes;
+        for(int i=0;i<b.length;i++)b[i]=group2.get(i).genes;
+        double[] ds=FLAPopulationDiagnostics.describe(a,b);
+        double bestM=Double.POSITIVE_INFINITY,bestC=Double.POSITIVE_INFINITY;
+        for(Solution s:archive) {
+            bestM=Math.min(bestM,s.makespan);
+            bestC=Math.min(bestC,s.cost);
+        }
+        if(!Double.isFinite(bestM)||!Double.isFinite(bestC))
+            throw new IllegalStateException("Missing archive extremes for diagnostics");
+        populationDiagnosticRows.add(new double[]{
+            generation,phase,ds[0],ds[1],ds[2],ds[3],ds[4],ds[5],
+            ds[6],ds[7],ds[8],generatedUnique,newAdmissions,rejected,
+            useBase,useEdge,useCritical,archive.size(),bestM,bestC,
+            evaluator.getObjectiveEvaluations()});
     }
 
     private List<Solution> population() {
@@ -1352,6 +1416,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         }
         for (int i=archive.size()-1;i>=0;i--) if(dominates(s,archive.get(i)))archive.remove(i);
         archive.add(s);
+        if(collectPopulationDiagnostics)archiveInsertionEvents++;
         while(archive.size()>archiveCapacity) pruneArchive();
     }
 

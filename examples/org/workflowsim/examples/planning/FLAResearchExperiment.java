@@ -95,6 +95,7 @@ public final class FLAResearchExperiment {
         double planHv;
         final List<Candidate> feedbackPool = new ArrayList<>();
         final List<String> feedbackTrace = new ArrayList<>();
+        List<double[]> populationDiagnostics = Collections.emptyList();
         Run(String name) { algorithm = name; }
     }
 
@@ -179,6 +180,18 @@ public final class FLAResearchExperiment {
                 assertCostSeedIdentity(timeline,nsga);
                 runs.add(v12);runs.add(random);runs.add(timeline);runs.add(nsga);
             } else if ("v15-search-sixarm".equals(args[5])) {
+                Run v12=runDag(dax,seed,pop,gens,"v12-hvbandit");
+                Run v14random=runDag(dax,seed,pop,gens,"v14-randompair");
+                Run v14timeline=runDag(dax,seed,pop,gens,"v14-timelinepair");
+                Run v15random=runDag(dax,seed,pop,gens,"v15-randomgate");
+                Run v15timeline=runDag(dax,seed,pop,gens,"v15-timelinegate");
+                Run nsga=runNsga(dax,seed,pop,gens,true);
+                for(Run arm:Arrays.asList(v12,v14random,v14timeline,v15random,v15timeline))
+                    assertCostSeedIdentity(arm,nsga);
+                runs.addAll(Arrays.asList(v12,v14random,v14timeline,v15random,v15timeline,nsga));
+            } else if ("population-mechanism-fivearm".equals(args[5])) {
+                if(!Boolean.getBoolean("dagfla.populationDiagnostics"))
+                    throw new IllegalArgumentException("Population diagnostics required for mechanism comparison");
                 Run v12=runDag(dax,seed,pop,gens,"v12-hvbandit");
                 Run v14random=runDag(dax,seed,pop,gens,"v14-randompair");
                 Run v14timeline=runDag(dax,seed,pop,gens,"v14-timelinepair");
@@ -308,6 +321,8 @@ public final class FLAResearchExperiment {
             for (Run run : runs) runScreeningAudit(dax, wf, seed, run, simRef);
         }
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
+        if(Boolean.getBoolean("dagfla.populationDiagnostics"))
+            savePopulationDiagnostics(prefix,runs,gens,pop);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
         if (BUDGET_REPLAY_K > 0) {
             saveVisitedFingerprints(wf,seed,prefix,runs);
@@ -329,6 +344,32 @@ public final class FLAResearchExperiment {
                     "This is NOT the full visited simulator Pareto front and not a registered reference point",
                     "The archive size column denotes source archive size; planned nondominated count is separate from replay count"
                     ),StandardCharsets.UTF_8);
+        }
+    }
+
+
+    /** Exact selected breeding-population measurement, no simulated labels. */
+    private static void savePopulationDiagnostics(Path prefix,List<Run> runs,
+            int generations,int pop) throws IOException {
+        Path p=Paths.get(prefix+"_population_diagnostics.csv");
+        try(BufferedWriter w=Files.newBufferedWriter(p,StandardCharsets.UTF_8)){
+            w.write("algorithm,generation,phase,selected_slots,selected_unique,selected_duplicate_slots,group1_unique,group2_unique,cross_group_overlap,pairwise_hamming_all,pairwise_hamming_group1,pairwise_hamming_group2,generated_unique,archive_insert_events,local_gate_rejections,bandit_baseline_uses,bandit_colocate_uses,bandit_critical_uses,archive_size,min_archive_makespan,min_archive_cost,objective_evaluations\\n");
+            for(Run run:runs) {
+                if(run.algorithm.startsWith("NSGA-II"))continue;
+                if(run.populationDiagnostics.size()!=generations+1)
+                    throw new IllegalStateException("Missing per-generation population snapshots: "+run.algorithm);
+                int expectedEval=pop;
+                for(int j=0;j<run.populationDiagnostics.size();j++) {
+                    double[] row=run.populationDiagnostics.get(j);
+                    if(row.length!=21 || (int)row[0]!=j ||
+                       (int)row[2]!=pop || (int)row[20]!=expectedEval)
+                        throw new IllegalStateException("Population trace corrupt: "+run.algorithm+" generation="+j);
+                    w.write(run.algorithm);
+                    for(double value:row)w.write(String.format(Locale.ROOT,",%.17g",value));
+                    w.write("\\n");
+                    expectedEval+=pop;
+                }
+            }
         }
     }
 
@@ -436,6 +477,8 @@ public final class FLAResearchExperiment {
                 ("v14-timelinepair".equals(variant) || "v15-timelinegate".equals(variant))?2:0;
         DAGParetoFLAPlanningAlgorithm.CONFIG_PARETO_GATED_LOCAL_SURVIVOR=
                 variant.startsWith("v15");
+        DAGParetoFLAPlanningAlgorithm.CONFIG_POPULATION_DIAGNOSTICS=
+                Boolean.getBoolean("dagfla.populationDiagnostics");
         DAGParetoFLAPlanningAlgorithm.CONFIG_CRITICAL_RELOCATION_MODE =
                 "v10-critical".equals(variant) ? 1 : "v10-guarded".equals(variant) ? 2 : 0;
         DAGParetoFLAPlanningAlgorithm.CONFIG_EDGE_RELOCATION_MODE =
@@ -469,6 +512,12 @@ public final class FLAResearchExperiment {
         saveFirstTwo(r,capture);
         append(r,capture.frontPoints(),capture.frontAssignments());
         appendAuditHistory(r,capture);
+        if(Boolean.getBoolean("dagfla.populationDiagnostics")){
+            if(m.populationDiagnostics==null || m.populationDiagnostics.size()!=gens+1)
+                throw new IllegalStateException("Incomplete nonintrusive population trace");
+            r.populationDiagnostics=new ArrayList<>();
+            for(double[] row:m.populationDiagnostics)r.populationDiagnostics.add(row.clone());
+        }
         return r;
     }
     private static Run runNsga(String dax,long seed,int pop,int gens,boolean costSeeded) {

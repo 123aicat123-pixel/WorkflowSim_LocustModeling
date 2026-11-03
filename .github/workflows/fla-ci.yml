@@ -63,6 +63,12 @@ jobs:
             org.workflowsim.planning.StageInAwareEvaluatorTest \
             2>&1 | tee ci-logs/stagein-aware-regression.log
 
+      - name: Test exact selected breeding-population diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp "build/classes:lib/*" org.workflowsim.planning.FLAPopulationDiagnosticsTest 2>&1 | tee ci-logs/population-diagnostics-test.log
+
       - name: Assert v14 one-count stage-in-aware trace and causal neighbor
         shell: bash
         run: |
