@@ -1,0 +1,127 @@
+name: ABBA K16 JVM order-crossover runtime noise audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-online-runtime-abba.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  case:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Inspiral_50]
+        seed: [108, 109]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fingerprint and compile source once
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD > ci-logs/source_sha.txt
+          find sources examples tests -name '*.java' -type f | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Alternate independent JVM invocation order AB versus BA
+        shell: bash
+        run: |
+          set -euo pipefail
+          for order in AB BA; do
+            if [ "$order" = AB ]; then
+              policies="pareto-cover online-observed-hv"
+            else
+              policies="online-observed-hv pareto-cover"
+            fi
+            for policy in $policies; do
+              java -Dworkflowsim.planningStageInAware=true \
+                -Ddagfla.budgetReplayK=16 \
+                -Ddagfla.budgetReplayPolicy="$policy" \
+                -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+                '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+                "Output&Results/$order-$policy-${{ matrix.workflow }}-s${{ matrix.seed }}" \
+                v12-fair-pair 2>&1 | tee "ci-logs/$order-$policy.log"
+              grep -F 'PASS identical first TWO task->VM deterministic cost seeds' "ci-logs/$order-$policy.log"
+            done
+          done
+      - name: Confirm same policies produce exact replay identities and true labels irrespective of order
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math
+          root=pathlib.Path('Output&Results')
+          wf='${{ matrix.workflow }}';seed='${{ matrix.seed }}'
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          fingerprints=[];orders={}
+          for order in ('AB','BA'):
+              for policy in ('pareto-cover','online-observed-hv'):
+                  prefix=root/(order+'-'+policy+'-'+wf+'-s'+seed)
+                  def read(s):
+                      with pathlib.Path(str(prefix)+s).open(newline='') as f:return list(csv.DictReader(f))
+                  stat=read('_summary.csv');replay=read('_replays.csv');hashes=read('_visited_fingerprints.csv')
+                  assert len(stat)==len(hashes)==3 and len(replay)==48
+                  assert {r['algorithm'] for r in stat}=={r['algorithm'] for r in hashes}==names
+                  fingerprints.append({r['algorithm']:r['history_sha256'] for r in hashes})
+                  orders[order,policy]={alg:sorted(
+                      (r for r in replay if r['algorithm']==alg),key=lambda r:int(r['candidate_index']))
+                      for alg in names}
+                  for r in stat:
+                      assert int(r['evaluations'])==int(r['captured_evaluations'])==3030
+                      assert int(r['replayed'])==16
+                      times=[float(r[k]) for k in ('search_ms','selection_ms','replay_ms','search_selection_replay_ms')]
+                      assert all(math.isfinite(x) and x>=0 for x in times) and times[2]>0
+                      assert abs(sum(times[:3])-times[3])<0.004
+          assert all(x==fingerprints[0] for x in fingerprints)
+          for policy in ('pareto-cover','online-observed-hv'):
+              for alg in names:
+                  first=orders['AB',policy][alg];second=orders['BA',policy][alg]
+                  assert len(first)==len(second)==16
+                  for a,b in zip(first,second):
+                      assert a['mapping']==b['mapping'] and a['candidate_index']==b['candidate_index']
+                      for objective in ('sim_makespan','sim_cost'):
+                          assert math.isclose(float(a[objective]),float(b[objective]),rel_tol=1e-8,abs_tol=1e-8)
+          print('PASS exact AB/BA search hash, replay mapping/true objectives, planning and simulator budgets')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abba-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_visited_fingerprints.csv
+          retention-days: 90
+          if-no-files-found: warn
+  report:
+    needs: case
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: abba-*-${{ github.run_id }}
+          path: input
+      - name: Reconcile AB versus BA policy runtime noise
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_online_runtime_abba.py input reports 2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          cat reports/abba_runtime_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: abba-summary-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
