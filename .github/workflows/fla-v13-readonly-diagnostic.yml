@@ -1,4 +1,5 @@
 name: Retrospective v13 real K16 search operator extremes and Pareto dominance diagnostic
+# Original job-artifact directory layout explicitly verified; analysis-only retry.
 on:
   push:
     branches: [fla-baseline]
