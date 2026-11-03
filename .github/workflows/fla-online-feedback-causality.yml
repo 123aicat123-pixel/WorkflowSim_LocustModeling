@@ -1,0 +1,41 @@
+name: Adversarial no-lookahead test for online causal WorkflowSim replay
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-online-feedback-causality.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  poison-future-labels:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile exact project revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes evidence
+          git rev-parse HEAD | tee evidence/source_sha.txt
+          find sources examples tests -name '*.java' -type f | sort > evidence/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @evidence/sources.txt \
+            2>&1 | tee evidence/compile.log
+      - name: Poison every unobserved simulator label and require decision invariance
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.OnlineFeedbackCausalityTest \
+            2>&1 | tee evidence/causality.log
+          grep -F 'PASS causal feedback no-lookahead' evidence/causality.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: no-lookahead-${{ github.run_id }}
+          path: evidence/
+          retention-days: 90
+          if-no-files-found: warn
