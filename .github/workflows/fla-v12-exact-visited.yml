@@ -103,7 +103,7 @@ jobs:
           python3 - <<'PY'
           import csv,pathlib,collections,statistics,math
           root=pathlib.Path('input')
-          summaries=list(root.rglob('*_summary.csv'))
+          summaries=[p for p in root.rglob('*_summary.csv') if not p.name.endswith('_screening_summary.csv')]
           audits=list(root.rglob('*_screening_summary.csv'))
           bases=list(root.rglob('*_replays.csv'))
           extras=list(root.rglob('*_screening_samples.csv'))
