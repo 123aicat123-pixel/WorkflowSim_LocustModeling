@@ -696,7 +696,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         StageInAwareScheduleEvaluator independent =
                 new StageInAwareScheduleEvaluator(taskOrder,vmList);
         int proposed=0,proxyImproves=0,trueImproves=0,agreement=0;
-        double meanTrueDelta=0.0,meanProxyDelta=0.0;
+        int paretoImproved=0,paretoWorsened=0,tradeoffs=0,costIncreased=0;
+        double meanTrueDelta=0.0,meanProxyDelta=0.0,meanCostChange=0.0;
         for(Solution parent:population()) {
             int[] before=parent.genes.clone();
             int[] after=before.clone();
@@ -705,23 +706,38 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             if(Arrays.equals(before,after))continue;
             proposed++;
             double p1=approximateMakespan(after,null);
-            double t0=independent.evaluate(evaluator.toAssignment(before)).makespan;
-            double t1=independent.evaluate(evaluator.toAssignment(after)).makespan;
+            StageInAwareScheduleEvaluator.Result base =
+                    independent.evaluate(evaluator.toAssignment(before));
+            StageInAwareScheduleEvaluator.Result changed =
+                    independent.evaluate(evaluator.toAssignment(after));
+            double t0=base.makespan,t1=changed.makespan;
+            double c0=base.cost,c1=changed.cost;
             boolean predictedPositive=p0-p1>1e-9;
             boolean truePositive=t0-t1>1e-9;
             if(predictedPositive)proxyImproves++;
             if(truePositive)trueImproves++;
             if(predictedPositive==truePositive)agreement++;
+            if(c1>c0+1e-9)costIncreased++;
+            boolean moveDominates=t1<=t0+1e-9 && c1<=c0+1e-9 &&
+                    (t1<t0-1e-9 || c1<c0-1e-9);
+            boolean originalDominates=t0<=t1+1e-9 && c0<=c1+1e-9 &&
+                    (t0<t1-1e-9 || c0<c1-1e-9);
+            if(moveDominates)paretoImproved++;
+            else if(originalDominates)paretoWorsened++;
+            else tradeoffs++;
             meanProxyDelta+=100.0*(p0-p1)/Math.max(EPS,p0);
             meanTrueDelta+=100.0*(t0-t1)/Math.max(EPS,t0);
+            meanCostChange+=100.0*(c1-c0)/Math.max(EPS,c0);
         }
         if(proposed>0){
             meanProxyDelta/=proposed;
             meanTrueDelta/=proposed;
+            meanCostChange/=proposed;
         }
         System.out.printf(java.util.Locale.ROOT,
-                "FLA_CRITICAL_LOCAL_AUDIT proposed=%d predictedPositive=%d stageInPositive=%d directionalAgreement=%d meanPredictedImprovementPct=%.9f meanStageInImprovementPct=%.9f%n",
-                proposed,proxyImproves,trueImproves,agreement,meanProxyDelta,meanTrueDelta);
+                "FLA_CRITICAL_LOCAL_AUDIT proposed=%d predictedPositive=%d stageInPositive=%d directionalAgreement=%d meanPredictedImprovementPct=%.9f meanStageInImprovementPct=%.9f costIncreased=%d paretoImproved=%d paretoWorsened=%d mixedOrTied=%d meanCostIncreasePct=%.9f%n",
+                proposed,proxyImproves,trueImproves,agreement,meanProxyDelta,meanTrueDelta,
+                costIncreased,paretoImproved,paretoWorsened,tradeoffs,meanCostChange);
     }
 
     /**
