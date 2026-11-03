@@ -1,0 +1,149 @@
+name: Statistical and reference robustness of v7 100-task Pareto confirmation
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v7-robustness.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  robustness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch immutable five-workflow five-seed v7 comparisons
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41561219538
+          github-token: ${{ github.token }}
+          pattern: v7-confirm-*
+          path: inputs
+          merge-multiple: false
+      - name: Recompute 25-case HV and workflow-cluster uncertainty and common reference sensitivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,pathlib,statistics,itertools,random,math,collections
+          paths=list(pathlib.Path('inputs').rglob('*_replays.csv'))
+          summaries=list(pathlib.Path('inputs').rglob('*_summary.csv'))
+          assert len(paths)==len(summaries)==25,(len(paths),len(summaries))
+          workflows=['CyberShake_100','Epigenomics_100','Inspiral_100','Montage_100','Sipht_100']
+          algs=['DAG-Pareto-FLA[v7-costseed]','NSGA-II','FLA-3W','MLEAO']
+          data=collections.defaultdict(list)
+          for p in paths:
+              with p.open(newline='') as f:rows=list(csv.DictReader(f))
+              assert rows,p
+              for x in rows:
+                  key=(x['workflow'],x['algorithm'],int(x['seed']))
+                  assert key[0] in workflows and key[1] in algs and 1<=key[2]<=5
+                  m,c=float(x['sim_makespan']),float(x['sim_cost'])
+                  assert math.isfinite(m) and math.isfinite(c) and m>0 and c>0
+                  data[key].append((m,c))
+          assert len(data)==5*4*5,len(data)
+          counts=[]
+          for p in summaries:
+              with p.open(newline='') as f:rr=list(csv.DictReader(f))
+              assert len(rr)==4
+              for x in rr:
+                  assert 2980<=int(x['evaluations'])<=3060
+                  assert int(x['evaluations'])==int(x['captured_evaluations'])
+                  assert int(x['replayed'])==len(data[(x['workflow'],x['algorithm'],int(x['seed']))])
+                  counts.append(x)
+          assert len(counts)==100
+          ranges={}
+          for wf in workflows:
+              allpts=[p for (w,a,s),pts in data.items() if w==wf for p in pts]
+              ranges[wf]=(max(p[0] for p in allpts),max(p[1] for p in allpts))
+          def nd(points):
+              u=sorted(set(points))
+              return [p for p in u if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in u)]
+          def hv(points,ref):
+              prev=ref[1];area=0.0
+              for m,c in nd(points):
+                  if m>=ref[0] or c>=ref[1]:continue
+                  if c<prev:
+                      area+=(ref[0]-m)*(prev-c);prev=c
+              return area
+          scales=(1.02,1.05,1.10,1.20,1.50)
+          vals={}
+          for sc in scales:
+              for key,pts in data.items():
+                  mx,cx=ranges[key[0]]
+                  vals[(sc,)+key]=hv(pts,(sc*mx+1,sc*cx+1))
+          primary=algs[0]
+          report=['# V7 100-task frozen-reference HV uncertainty and sensitivity',
+                  '',
+                  'All values were independently recalculated from the 25 immutable four-algorithm WorkflowSim replay CSVs (run 41561219538).',
+                  'One shared 1.05-worst-observed reference per workflow, across all solvers and seeds, is the primary report reference.',
+                  'The algorithm was tuned on similar workflow families; tests are exploratory, not pristine preregistered unseen DAG instances.',
+                  'The simulator replays remain planning-nondominated *subsets* of all visited assignments.',
+                  '',
+                  '## Across five families, five seeds: paired HV changes and family-block uncertainty',
+                  '',
+                  '| V7 vs | Mean paired % | Positive pairs | Family-sign-flip two-sided p | Family-block bootstrap 95% interval % |',
+                  '|---|---:|---:|---:|---:|']
+          for alg in algs[1:]:
+              byfam={wf:[100*(vals[(1.05,wf,primary,s)]/max(1e-12,vals[(1.05,wf,alg,s)])-1)
+                  for s in range(1,6)] for wf in workflows}
+              fmeans=[statistics.mean(byfam[w]) for w in workflows]
+              allx=[x for w in workflows for x in byfam[w]]
+              obs=statistics.mean(fmeans)
+              rng=random.Random(13579)
+              boots=[]
+              for _ in range(20000):
+                  sampled=[rng.choice(fmeans) for __ in workflows]
+                  boots.append(statistics.mean(sampled))
+              boots.sort()
+              flip=[statistics.mean(sign*f for sign,f in zip(signs,fmeans))
+                    for signs in itertools.product((-1,1),repeat=5)]
+              p=sum(abs(x)>=abs(obs)-1e-12 for x in flip)/len(flip)
+              report.append(f'| {alg} | {statistics.mean(allx):+.3f} | {sum(x>0 for x in allx)}/25 | {p:.4f} | [{boots[499]:+.3f}, {boots[19499]:+.3f}] |')
+              report.append(f'Family means vs {alg}: '+', '.join(f'{wf} {v:+.3f}%' for wf,v in zip(workflows,fmeans)))
+          report+=['',
+                   'Family-sign-flip tests assume exchangeability of family-level signs; with five families, resolution is coarse. Multiple algorithm variants were tried previously, so these are not confirmatory p-values.',
+                   'Bootstrap samples families (not twenty-five independent seeds), and is exploratory with only five clusters.',
+                   '',
+                   '## Sensitivity to different common per-family reference scales',
+                   '',
+                   '| Common worst-observed multiplier | Mean v7 vs NSGA-II % | V7 wins vs NSGA-II | Mean v7 vs FLA-3W % | V7 wins vs FLA-3W | Top-solver winner changes vs 1.05 |',
+                   '|---|---:|---:|---:|---:|---:|']
+          originals={(wf,seed):max(algs,key=lambda a:vals[(1.05,wf,a,seed)])
+                     for wf in workflows for seed in range(1,6)}
+          raw=[]
+          for sc in scales:
+              paired={}
+              pos={}
+              for alg in algs[1:3]:
+                  d=[100*(vals[(sc,wf,primary,s)]/max(1e-12,vals[(sc,wf,alg,s)])-1)
+                     for wf in workflows for s in range(1,6)]
+                  paired[alg]=statistics.mean(d);pos[alg]=sum(x>0 for x in d)
+              changed=0
+              for wf in workflows:
+                  for seed in range(1,6):
+                      champion=max(algs,key=lambda a:vals[(sc,wf,a,seed)])
+                      if champion!=originals[(wf,seed)]:changed+=1
+                      for alg in algs:
+                          raw.append(dict(scale=sc,workflow=wf,seed=seed,algorithm=alg,
+                              sim_hv=vals[(sc,wf,alg,seed)],ref_m=sc*ranges[wf][0]+1,ref_c=sc*ranges[wf][1]+1))
+              report.append(f'| {sc:.2f} | {paired["NSGA-II"]:+.3f} | {pos["NSGA-II"]}/25 | {paired["FLA-3W"]:+.3f} | {pos["FLA-3W"]}/25 | {changed}/25 |')
+          assert abs(statistics.mean([
+                100*(vals[(1.05,wf,primary,s)]/vals[(1.05,wf,'NSGA-II',s)]-1)
+                for wf in workflows for s in range(1,6)])-4.464)<0.01
+          with pathlib.Path('reports/v7_reference_sensitivity.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(raw[0]));w.writeheader();w.writerows(raw)
+          pathlib.Path('reports/v7_robustness.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/v7_robustness.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v7-robustness-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
