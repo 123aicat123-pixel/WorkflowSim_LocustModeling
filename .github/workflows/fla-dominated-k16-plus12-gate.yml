@@ -1,0 +1,94 @@
+name: FLA Planned-Dominated Extra-K12 True Simulator Rank Falsification
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-dominated-k16-plus12-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-source-extra-strata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Montage_100, CyberShake_50]
+        seed: [951, 952]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean build, FIFO/ready prediction and scheduler regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.QueueConflictRiskRelocationTest > reports/v19-guard-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-queue-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/stagein-oracle.log
+      - name: Prospectively freeze K16 and 12 unselected dominated/tied candidates before their simulator results
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.priorityAwareSearch=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Ddagfla.screeningAuditPerAlgorithm=12 \
+            -Ddagfla.screeningAuditIncludeTies=true \
+            -Ddagfla.screeningAuditAllVisited=false \
+            -Ddagfla.allowSeparateKPlusScreeningDiagnostic=true \
+            -Dliwsa.vmSpeedProfile=staggered \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -110 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math
+          def read(path):
+            with open(path,newline='') as f:return list(csv.DictReader(f))
+          sums=read('reports/research_summary.csv')
+          real=read('reports/research_replays.csv')
+          screen_sum=read('reports/research_screening_summary.csv')
+          extra=read('reports/research_screening_samples.csv')
+          expected={'DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(sums)==len(screen_sum)==2 and len(real)==32 and len(extra)==24
+          assert {x['algorithm'] for x in sums}=={x['algorithm'] for x in screen_sum}==expected
+          for s in sums:
+            alg=s['algorithm'];z=[x for x in real if x['algorithm']==alg]
+            u=[x for x in extra if x['algorithm']==alg]
+            t=next(x for x in screen_sum if x['algorithm']==alg)
+            assert s['workflow']=='${{ matrix.workflow }}' and int(s['seed'])==${{ matrix.seed }}
+            assert tuple(int(s[k]) for k in ('population','generations','evaluations',
+                'captured_evaluations','replayed'))==(30,100,3030,3030,16)
+            assert int(t['sampled'])==12 and len(z)==16 and len(u)==12
+            assert {x['stratum'] for x in u}=={'near-planned-front','uniform-remainder'}
+            assert sum(x['stratum']=='near-planned-front' for x in u)==6
+            assert sum(x['stratum']=='uniform-remainder' for x in u)==6
+            assert len(set(x['mapping'] for x in z+u))==28
+            assert all(x['workflow']=='${{ matrix.workflow }}' and int(x['seed'])==${{ matrix.seed }}' for x in z+u)
+            for x in z+u:
+              for col in ('planned_makespan','planned_cost','sim_makespan','sim_cost'):
+                assert math.isfinite(float(x[col])) and float(x[col])>0,(alg,col,x)
+          print("PASS 2 original solvers ×(K16 frozen planned plus K12 separately sampled dominated/tied) = 56 actual simulator replays")
+          PY
+          printf 'DAG=%s seed=%s pop=30 gens=100 K=16 extra=12 profile=staggered policy=fifo\n' \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_PROSPECTIVE_DOMINATED_K16_PLUS_12_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+      - name: Archive original planned and simulator labels for K front and extra dominated/tied pool
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-dom-k16plus12-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
