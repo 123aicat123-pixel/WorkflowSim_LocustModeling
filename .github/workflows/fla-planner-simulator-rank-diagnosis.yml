@@ -1,0 +1,39 @@
+name: Reproduce planner-versus-simulator rank fidelity from full-history oracle
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-planner-simulator-rank-diagnosis.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  rank-diagnosis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable completed independent full-replay oracle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41582476054
+          github-token: ${{ github.token }}
+          pattern: budget-*-41582476054
+          path: originals
+      - name: Analyze all eight cases and record source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_rank_fidelity_diagnostic.py originals reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-source-sha.txt
+          printf '%s\n' 'Independent original simulator full-history Actions 41582476054' > reports/original-run.txt
+          cat reports/rank_fidelity_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve scripts output and original source trace
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: planner-simulator-rank-fidelity-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: error
