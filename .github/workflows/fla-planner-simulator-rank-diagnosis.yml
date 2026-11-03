@@ -26,9 +26,11 @@ jobs:
           set -euo pipefail
           mkdir -p reports
           python3 scripts/fla_rank_fidelity_diagnostic.py originals reports | tee reports/stdout.log
+          python3 scripts/fla_rank_inversion_margin_gate.py originals reports | tee reports/margin_stdout.log
           git rev-parse HEAD > reports/analysis-source-sha.txt
           printf '%s\n' 'Independent original simulator full-history Actions 41582476054' > reports/original-run.txt
           cat reports/rank_fidelity_report.md >> "$GITHUB_STEP_SUMMARY"
+          cat reports/margin_rank_inversion_report.md >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve scripts output and original source trace
         uses: actions/upload-artifact@v4
         if: always()
