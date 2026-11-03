@@ -44,6 +44,9 @@ public final class FLAResearchExperiment {
     /** Include equal planned objectives from distinct assignments in exhaustive audits. */
     private static final boolean SCREENING_INCLUDE_TIES =
             Boolean.getBoolean("dagfla.screeningAuditIncludeTies");
+    /** Explicit diagnostic mode: replay every unique visited assignment, even if absent from final archive. */
+    private static final boolean SCREENING_ALL_VISITED =
+            Boolean.getBoolean("dagfla.screeningAuditAllVisited");
 
     private static final class Candidate {
         final double[] planned;
@@ -71,6 +74,7 @@ public final class FLAResearchExperiment {
         final List<String> auditStrata = new ArrayList<>();
         int dominatedPool;
         int tiedPool;
+        int otherPlannedPool;
         int auditUniqueVisited;
         int newSimulatorNondominated;
         double auditHvGain;
@@ -88,7 +92,9 @@ public final class FLAResearchExperiment {
         int pop = Integer.parseInt(args[2]);
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
-        if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 100) throw new IllegalArgumentException("invalid diagnostic sample count");
+        if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
+        if (SCREENING_ALL_VISITED && (!SCREENING_INCLUDE_TIES || SCREENING_AUDIT_N == 0))
+            throw new IllegalArgumentException("all-visited replay requires positive sample cap and including ties");
         Path prefix = Paths.get(args[4]);
         if (prefix.getParent() != null) Files.createDirectories(prefix.getParent());
         String dax = "config/dax/" + wf + ".xml";
@@ -436,10 +442,18 @@ public final class FLAResearchExperiment {
                 if(tied) {
                     dominated.add(c);
                     run.tiedPool++;
+                } else if (SCREENING_ALL_VISITED) {
+                    // A history member may be absent from the reported archive without
+                    // being strictly planning-dominated; do not silently discard it.
+                    dominated.add(c);
+                    run.otherPlannedPool++;
                 }
             }
         }
         dominated.sort(Comparator.comparingDouble(c->normalizedDistance(c,run.candidates)));
+        if (SCREENING_ALL_VISITED && dominated.size() > SCREENING_AUDIT_N)
+            throw new IllegalStateException("all-visited audit cap too small for " + run.algorithm
+                    + ": need " + dominated.size() + ", cap " + SCREENING_AUDIT_N);
         int take=Math.min(SCREENING_AUDIT_N,dominated.size());
         int nearest=take/2;
         for(int i=0;i<nearest;i++){
@@ -479,8 +493,8 @@ public final class FLAResearchExperiment {
         if(extraHv+1e-7*Math.max(1,Math.abs(run.simHv))<run.simHv)
             throw new IllegalStateException("Hypervolume lost after adding candidate points");
         System.out.printf(Locale.ROOT,
-                "SCREENING_AUDIT %s %s seed=%d strictDominated=%d plannedTies=%d sampled=%d nondominatedVsBase=%d hvBase=%.9f hvExtra=%.9f delta=%.9f%n",
-                wf,run.algorithm,seed,run.dominatedPool,run.tiedPool,run.audited.size(),
+                "SCREENING_AUDIT %s %s seed=%d strictDominated=%d plannedTies=%d otherPlanned=%d sampled=%d nondominatedVsBase=%d hvBase=%.9f hvExtra=%.9f delta=%.9f%n",
+                wf,run.algorithm,seed,run.dominatedPool,run.tiedPool,run.otherPlannedPool,run.audited.size(),
                 run.newSimulatorNondominated,run.simHv,extraHv,run.auditHvGain);
     }
 
@@ -488,13 +502,13 @@ public final class FLAResearchExperiment {
             throws IOException {
         try(BufferedWriter w=Files.newBufferedWriter(
                 Paths.get(prefix+"_screening_summary.csv"),StandardCharsets.UTF_8)) {
-            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,planned_tie_pool,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\n");
+            w.write("workflow,algorithm,seed,unique_visited,strict_planned_dominated,planned_tie_pool,other_planned_pool,sampled,non_dominated_vs_base,baseline_sim_hv,extra_sim_hv,delta_hv,delta_hv_pct\n");
             for(Run r:runs) {
                 double pct=100.0*r.auditHvGain/Math.max(1e-12,r.simHv);
                 w.write(String.format(Locale.ROOT,
-                     "%s,%s,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.8f%n",
+                     "%s,%s,%d,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.8f%n",
                     wf,r.algorithm,seed,r.auditUniqueVisited,r.dominatedPool,r.tiedPool,
-                    r.audited.size(),r.newSimulatorNondominated,r.simHv,
+                     r.otherPlannedPool,r.audited.size(),r.newSimulatorNondominated,r.simHv,
                     r.simHv+r.auditHvGain,r.auditHvGain,pct));
             }
         }
