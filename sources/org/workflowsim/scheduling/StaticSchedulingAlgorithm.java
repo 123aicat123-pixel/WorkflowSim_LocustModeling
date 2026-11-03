@@ -16,6 +16,7 @@
 package org.workflowsim.scheduling;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.cloudbus.cloudsim.Log;
@@ -50,10 +51,15 @@ public class StaticSchedulingAlgorithm extends BaseSchedulingAlgorithm {
             }
         }
 
-        int size = getCloudletList().size();
+        // Preserve the original FIFO order unless an explicit research-only
+        // runtime ready-job priority policy is selected by JVM property.
+        // Never mutate the pending list; the scheduler still removes only
+        // the exact selected Cloudlet objects after this pass.
+        List<Cloudlet> pending = FLAFixedVmReadyPriority.ordered(getCloudletList());
+        int size = pending.size();
 
         for (int i = 0; i < size; i++) {
-            Cloudlet cloudlet = (Cloudlet) getCloudletList().get(i);
+            Cloudlet cloudlet = pending.get(i);
             /**
              * Make sure cloudlet is matched to a VM. It should be done in the
              * Workflow Planner. If not, throws an exception because
