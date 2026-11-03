@@ -225,6 +225,14 @@ public final class FLAResearchExperiment {
                 for(Run x:Arrays.asList(base,fullR,doR,lateR,fullT,doT,lateT))
                     assertCostSeedIdentity(x,nsga);
                 runs.addAll(Arrays.asList(base,fullR,doR,lateR,fullT,doT,lateT,nsga));
+            } else if ("v17-confirm-fourarm".equals(args[5])) {
+                Run baseline=runDag(dax,seed,pop,gens,"v12-hvbandit");
+                Run doRandom=runDag(dax,seed,pop,gens,"v17-do-random");
+                Run lateRandom=runDag(dax,seed,pop,gens,"v17-late-random");
+                Run nsga=runNsga(dax,seed,pop,gens,true);
+                for(Run arm:Arrays.asList(baseline,doRandom,lateRandom))
+                    assertCostSeedIdentity(arm,nsga);
+                runs.addAll(Arrays.asList(baseline,doRandom,lateRandom,nsga));
             } else if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, false));
             } else if ("nsga-costseed".equals(args[5])) {
