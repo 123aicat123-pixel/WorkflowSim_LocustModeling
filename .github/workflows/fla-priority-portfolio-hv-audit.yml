@@ -1,0 +1,40 @@
+name: Read-only Priority Portfolio Actual K16 Six-Arm Common True-HV
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-portfolio-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  all-source-verified:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all twenty COMPLETED original full optimization/simulator artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41683032206
+          github-token: ${{ github.token }}
+          pattern: fla-priority-portfolio-*-41683032206
+          path: original
+      - name: Independently check genotype budgets and calculate true common-reference HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_priority_portfolio_first_gate_hv_audit.py
+          python3 scripts/fla_priority_portfolio_first_gate_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          printf 'Frozen original 20-job actual simulator Actions: 41683032206\n' > reports/original-run-id.txt
+          cat reports/actual_priority_portfolio_true_hv_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all actual points, negative cases, and source provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-portfolio-actual-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
