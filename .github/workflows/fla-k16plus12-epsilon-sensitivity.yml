@@ -1,0 +1,42 @@
+name: Read-only K16 Plus K12 Real Epsilon-Pareto Sensitivity
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-k16plus12-epsilon-sensitivity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  epsilon-actual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download independently validated 224 immutable real simulator labels
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41693970902
+          github-token: ${{ github.token }}
+          pattern: fla-k16plus12-independent-audit-41693970902
+          path: original
+      - name: Independently assess robustness of all 96 extra nondominated cases with no simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_k16plus12_epsilon_pareto_sensitivity.py
+          test -s original/all_224_true_replay_candidates.csv
+          python3 scripts/fla_k16plus12_epsilon_pareto_sensitivity.py \
+            original/all_224_true_replay_candidates.csv reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          echo 'Original source failed postcheck but complete true simulator data 41693332570, recovered in 41693970902' > reports/source-provenance.txt
+          cat reports/epsilon_pareto_sensitivity_conclusions.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all 96 numeric epsilon thresholds and positive/negative cases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-epsilon-k16plus12-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
