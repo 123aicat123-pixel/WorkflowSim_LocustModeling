@@ -1,0 +1,78 @@
+name: FLA v18 Disagreement-Targeted Operator True-HV Gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v18-disagreement-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  operator-falsification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [CyberShake_50, Montage_50]
+        seed: [211, 212]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean build and unchanged decoder regression oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -name '*.java' -type f | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.DualModelScheduleObjectiveTest > reports/dual-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/old-stagein-oracle.log
+      - name: Equal-budget FLA v12 vs FLA v18 vs NSGA-II in real WorkflowSim
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.dualModelMode=off -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.budgetReplayK=16 -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 reports/research \
+            v18-disagreement-three-arm > reports/experiment.log 2>&1 || {
+              tail -100 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,re
+          def read(p):
+            with open(p,newline='') as f:return list(csv.DictReader(f))
+          s=read('reports/research_summary.csv')
+          r=read('reports/research_replays.csv')
+          assert len(s)==3 and len(r)==48,(len(s),len(r))
+          expected={'DAG-Pareto-FLA[v12-hvbandit]','DAG-Pareto-FLA[v18-disagreement]','NSGA-II[costseed]'}
+          assert {x['algorithm'] for x in s}==expected
+          for entry in s:
+            arm=entry['algorithm']
+            assert (int(entry['evaluations']),int(entry['captured_evaluations']),int(entry['replayed']))==(3030,3030,16),entry
+            subset=[x for x in r if x['algorithm']==arm]
+            assert len(subset)==len({x['mapping'] for x in subset})==16
+            assert [int(x['candidate_index']) for x in subset]==list(range(1,17))
+            assert all(math.isfinite(float(x[k])) and float(x[k])>0 for x in subset for k in ('planned_makespan','planned_cost','sim_makespan','sim_cost'))
+          log=open('reports/experiment.log').read()
+          matches=re.findall(r'V18_DISAGREEMENT proposals=(\d+) actualRelocations=(\d+)',log)
+          assert len(matches)==1,matches
+          proposals,moves=map(int,matches[0])
+          assert proposals>0 and 0<=moves<=proposals,(proposals,moves)
+          print('PASS original v12 + v18 + NSGA-II: each 3030 evaluations, unique K16 real replays, v18 active',proposals,moves)
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          printf 'DAG=%s seed=%s\n' '${{ matrix.workflow }}' '${{ matrix.seed }}' > reports/block-id.txt
+          cp docs/FLA_V18_DISAGREEMENT_OPERATOR_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+      - name: Preserve entire real simulator outcomes and all failures
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v18-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
