@@ -92,6 +92,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public int group2Size;
         public int edgeRelocationChanges;
         public int criticalRelocationChanges;
+        public int criticalProxySamples;
+        public double criticalProxyPearson;
+        public double criticalProxyMedianAbsolutePctError;
         public double finalAlpha1;
         public double finalDiversity;
         public List<double[]> searchTrace; // {iteration, archiveSize, bestM, bestCost, diversity}
@@ -136,6 +139,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
+    private final List<double[]> criticalProxyPairs = new ArrayList<>();
 
     private Random random;
     private FLAScheduleEvaluator evaluator;
@@ -216,7 +220,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         List<Solution> initial = initializePopulation();
         group1 = new ArrayList<>(initial.subList(0, group1Size));
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
-        archive.clear(); searchTrace.clear();
+        archive.clear(); searchTrace.clear(); criticalProxyPairs.clear();
         doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0; alpha1 = 0.85;
         for (Solution s : initial) { archiveConsider(s); }
         final Set<String> globalVisited = useNoveltyRepair && useGlobalHistory
@@ -313,7 +317,13 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     }
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
+                // Passive fidelity audit: proxy uses NO target fitness calls;
+                // compare to the ONE normal stage-in-aware evaluated result.
+                final double predictedCriticalMakespan = criticalRelocationMode != 0
+                        ? approximateMakespan(genes,null) : Double.NaN;
                 Solution child = new Solution(genes, evaluator.evaluate(genes));
+                if(criticalRelocationMode != 0)
+                    criticalProxyPairs.add(new double[]{predictedCriticalMakespan, child.makespan});
                 archiveConsider(child); // ALL visited children, even if not selected
                 (isG1 ? children1 : children2).add(child);
             }
@@ -381,6 +391,24 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.group2Size = group2.size();
         m.edgeRelocationChanges = edgeChangeCount;
         m.criticalRelocationChanges = criticalChangeCount;
+        if (!criticalProxyPairs.isEmpty()) {
+            double sx=0,sy=0,sxx=0,syy=0,sxy=0;
+            double[] errors=new double[criticalProxyPairs.size()];
+            for(int i=0;i<criticalProxyPairs.size();i++) {
+                double[] z=criticalProxyPairs.get(i);
+                double x=z[0],y=z[1];
+                sx+=x;sy+=y;sxx+=x*x;syy+=y*y;sxy+=x*y;
+                errors[i]=100.0*Math.abs(x-y)/Math.max(EPS,y);
+            }
+            Arrays.sort(errors);
+            int count=criticalProxyPairs.size();
+            m.criticalProxySamples=count;
+            m.criticalProxyMedianAbsolutePctError=
+                    count%2==1 ? errors[count/2] : 0.5*(errors[count/2-1]+errors[count/2]);
+            double corrDenom=(count*sxx-sx*sx)*(count*syy-sy*sy);
+            m.criticalProxyPearson=corrDenom>EPS
+                    ? (count*sxy-sx*sy)/Math.sqrt(corrDenom) : Double.NaN;
+        }
         m.finalAlpha1 = alpha1;
         m.finalDiversity = hammingDiversity(population());
         m.searchTrace = new ArrayList<>();
@@ -389,6 +417,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d criticalRelocationChanges=%d%n",
                 m.paretoFrontSize,m.chosenMakespan,m.chosenCost,m.objectiveEvaluations,
                 m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges,m.criticalRelocationChanges);
+        if(m.criticalProxySamples>0)
+            System.out.printf(java.util.Locale.ROOT,
+                    "FLA_CRITICAL_PROXY_AUDIT samples=%d pearson=%.9f medianAbsolutePctError=%.9f%%%n",
+                    m.criticalProxySamples,m.criticalProxyPearson,m.criticalProxyMedianAbsolutePctError);
     }
 
     private List<Solution> population() {
