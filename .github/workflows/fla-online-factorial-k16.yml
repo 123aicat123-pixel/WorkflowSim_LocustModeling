@@ -1,0 +1,133 @@
+name: Factorial causal online HV K16 mechanisms at equal simulator budget
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-online-factorial-k16.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Inspiral_50]
+        seed: [93, 94]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile all project source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes logs 'Output&Results'
+          git rev-parse HEAD | tee logs/source_sha.txt
+          find sources examples tests -name '*.java' -type f | sort > logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @logs/sources.txt 2>&1 | tee logs/compile.txt
+      - name: Real sequential online and pre-simulator K16 comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          for policy in pareto-cover online-planned-hv online-observed-hv online-nearest-hv; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.budgetReplayK=16 \
+              -Ddagfla.budgetReplayPolicy="$policy" \
+              -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+              "Output&Results/$policy-${{ matrix.workflow }}-s${{ matrix.seed }}" \
+              v12-fair-pair 2>&1 | tee "logs/$policy.log"
+            grep -F 'PASS identical first TWO task->VM deterministic cost seeds' "logs/$policy.log"
+          done
+      - name: Assert budgets, same full search SHA, and no feedback look-ahead
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,csv,collections,math
+          root=pathlib.Path('Output&Results')
+          wf='${{ matrix.workflow }}';seed='${{ matrix.seed }}'
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          histories={}
+          orders={}
+          for policy in ('pareto-cover','online-planned-hv','online-observed-hv','online-nearest-hv'):
+              p=root/(policy+'-'+wf+'-s'+seed)
+              def read(s):
+                  with pathlib.Path(str(p)+s).open(newline='') as f:return list(csv.DictReader(f))
+              stat=read('_summary.csv');replays=read('_replays.csv');sha=read('_visited_fingerprints.csv')
+              assert len(stat)==len(sha)==3 and len(replays)==48
+              assert {r['algorithm'] for r in stat}=={r['algorithm'] for r in sha}==names
+              assert collections.Counter(r['algorithm'] for r in replays)=={a:16 for a in names}
+              assert all(int(r['evaluations'])==int(r['captured_evaluations'])==3030 and int(r['replayed'])==16 for r in stat)
+              histories[policy]={r['algorithm']:(r['history_sha256'],int(r['distinct_visited'])) for r in sha}
+              for alg in names:
+                  rr=sorted([r for r in replays if r['algorithm']==alg],key=lambda x:int(x['candidate_index']))
+                  assert [int(x['candidate_index']) for x in rr]==list(range(1,17))
+                  assert len({r['mapping'] for r in rr})==16
+                  orders[alg,policy]=rr
+                  for row in rr:
+                      assert math.isfinite(float(row['sim_makespan'])) and float(row['sim_makespan'])>0
+                      assert math.isfinite(float(row['sim_cost'])) and float(row['sim_cost'])>0
+              if policy.startswith('online-'):
+                  decisions=read('_online_trace.csv')
+                  assert len(decisions)==48
+                  for alg in names:
+                      trace=[r for r in decisions if r['algorithm']==alg]
+                      assert len(trace)==16
+                      rr=orders[alg,policy]
+                      for i,(decision,replay) in enumerate(zip(trace,rr)):
+                          assert int(decision['step'])==i+1 and decision['mapping']==replay['mapping']
+                          assert int(decision['observed_before'])==(0 if i<4 else i)
+                          assert decision['mode']==('warm' if i<4 else 'online')
+                          if i>=4:
+                              assert decision['nearest_observed_mapping'] in {r['mapping'] for r in rr[:i]}
+                              assert math.isfinite(float(decision['predicted_hv_gain']))
+          assert all(h==histories['pareto-cover'] for h in histories.values())
+          for alg in names:
+              for policy in ('online-planned-hv','online-observed-hv','online-nearest-hv'):
+                  assert [x['mapping'] for x in orders[alg,'pareto-cover'][:4]]==[
+                      x['mapping'] for x in orders[alg,policy][:4]]
+          print('PASS exact same search SHA, first 4 same candidates, causal trace, 3030 planning + 16 real simulator evaluations per arm')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: causal-factorial-k16-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            logs/
+            Output&Results/*_replays.csv
+            Output&Results/*_summary.csv
+            Output&Results/*_visited_fingerprints.csv
+            Output&Results/*_online_trace.csv
+            Output&Results/*_budget_protocol.txt
+          retention-days: 90
+          if-no-files-found: warn
+  report:
+    runs-on: ubuntu-latest
+    needs: paired
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: causal-factorial-k16-*-${{ github.run_id }}
+          path: input
+      - name: Aggregate actual WorkflowSim HV, including every negative case
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_online_mechanism_ablation.py input reports | tee reports/aggregate.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/online_factorial_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: causal-factorial-k16-report-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
