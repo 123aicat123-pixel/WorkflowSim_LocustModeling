@@ -102,7 +102,7 @@ public final class FLAFixedMappingReplay {
                 +"original_default_planned_makespan,original_default_planned_cost,"
                 +"original_default_actual_makespan,original_default_actual_cost,"
                 +"fixed_replay_planned_makespan,fixed_replay_planned_cost,"
-                +"fixed_replay_actual_makespan,fixed_replay_actual_cost\\n");
+                +"fixed_replay_actual_makespan,fixed_replay_actual_cost\n");
             for(int k=1;k<=limit;k++) {
                 String[] f=selected.get(k);
                 String raw=f[mappingIndex];
