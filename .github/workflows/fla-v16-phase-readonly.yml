@@ -1,0 +1,36 @@
+name: v16 FLA Opportunity Phase Read-only Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v16-phase-readonly.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41623075676
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: fla-v16-*-41623075676
+          path: original
+      - name: Verify source hashes and report only archived phase data
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v16_phase_readonly.py
+          python3 scripts/fla_v16_phase_readonly.py original reports | tee reports/analysis.log
+          git rev-parse HEAD > reports/report_code_sha.txt
+          cat reports/v16_phase_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v16-phase-readonly-${{ github.run_id }}
+          path: reports
+          retention-days: 90
