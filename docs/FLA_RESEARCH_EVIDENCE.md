@@ -207,3 +207,39 @@ The 100-task solver comparison was independently recomputed using **the same imm
 [Five-reference-point robustness check and full per-seed CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41519102169).
 
 Both filtering bias and reference-point sensitivity should be addressed before claiming statistically robust algorithm superiority.
+
+## V7 cost-seeding: measured gains and fair-NSGA counterfactual (2026-11-03)
+
+**Motivation from independent 100-task front geometry**: On Montage_100 (five paired seeds), v6-pop's simulated Pareto front from planned-nondominated replay had **9.2** nondominated points on average, versus **38.2** for FLA-3W. V6 found better minimum makespan (**126.008** versus **133.270**), but much worse minimum cost (**514.026** versus **486.077**). Therefore increasing genotype novelty alone did not ensure coverage of the low-cost extreme. [Actual 100-task front-geometry report and raw CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41560133441).
+
+V7 introduces two *optional* changes, both off by default and limited to the DAG-FLA experimental driver:
+
+- `v7-costseed`: replace **two** random initial population members (not additional evaluations) with task-wise low estimated computation-plus-real-input-stage-in cost assignments and lowest-VM-price assignments. The low-cost proxy is used only for proposals; all objectives are evaluated by the existing stage-in-aware shared objective.
+- `v7-extreme`: a stochastic minimum-cost archive member becomes the group-2 reference during certain iterations. `v7-both` combines both operators.
+
+**V7 development ablation**: Montage_100, CyberShake_100, Sipht_100, three seeds each, population 30, generations 100, **3030 actual objective evaluations per variant**; all HV values are simulator-replayed with a single per-family frozen reference point across variants and seeds.
+
+| V7 compared with v6-pop | Mean paired simulator-HV change over 9 development cases | Positive cases |
+|---|---:|---:|
+| v7-costseed | **+14.105%** | **9/9** |
+| v7-extreme | +2.618% | 7/9 |
+| v7-both | +10.910% | 8/9 |
+
+For v7-costseed, family-level mean paired changes versus v6 were CyberShake_100 **+4.722%**, Montage_100 **+33.554%**, Sipht_100 **+4.040%**. All observations use the same planned-front screening limitation as the original protocol. **This is a tuned development comparison, not evidence of generalization or NSGA-II superiority.**
+
+[Full v7 control-variant simulation replay data, unique-genotype metrics, and fixed-reference report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41560504749).
+
+**Fair initialization counterfactual**: We also added a default-OFF `NSGAIIPlanningAlgorithm.CONFIG_COST_SEEDING` that constructs the **same two deterministic proposals** in NSGA-II's own task order before its random initial population. Standard unseeded NSGA-II is unchanged, and both v7 and seeded NSGA-II retain their original 3030 objective evaluations and otherwise unchanged optimizer search. We used a five-way direct comparison (v7, canonical unseeded NSGA-II, NSGA-II[costseed], FLA-3W, MLEAO) on CyberShake_100 and Montage_100 with three paired seeds and a common simulator HV reference within each family.
+
+| V7 compared with | Mean relative HV difference over six pairs | V7 positive cases |
+|---|---:|---:|
+| Unseeded NSGA-II | **+7.366%** | **6/6** |
+| Matched `NSGA-II[costseed]` | **+0.019%** | **2/6** |
+
+CyberShake_100: the same-initialization NSGA-II defeated v7 on all 3/3 paired seeds, with v7 averaging **−1.566%** relative HV. Montage_100: v7 averaged **+1.605%** versus same-initialization NSGA-II (2/3 wins), but FLA-3W was the highest-HV solver in all three seeds.
+
+[Matched-cost-initialization counterfactual and 30 actual simulator run records](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41561522053).
+
+**Scientific implication:** v7's gain versus unseeded NSGA-II should NOT be described as FLA-specific optimizer superiority. Giving the same low-cost seeds to NSGA-II largely eliminates that gain in this limited six-pair probe. The initialization should be treated as a **shared heuristic baseline** in further scientific comparisons, and a stronger FLA-specific operator is still unproven. The current five-workflow, five-seed direct confirmation workflow `fla-v7-costseed-confirm.yml` must also be evaluated before any manuscript claim.
+
+V7 output and the counterfactual are purely experimental; the default `DAG_PARETO_FLA` and default NSGA-II planners have not been silently reconfigured.
