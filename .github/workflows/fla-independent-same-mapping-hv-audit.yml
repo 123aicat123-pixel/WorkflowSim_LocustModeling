@@ -38,3 +38,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: error
+
+# Rerun read-only only after fixing duplicate-workflow keyword; original 96 simulators immutable.
