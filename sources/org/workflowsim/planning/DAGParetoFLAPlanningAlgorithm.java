@@ -720,7 +720,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             meanTrueDelta/=proposed;
         }
         System.out.printf(java.util.Locale.ROOT,
-                "FLA_CRITICAL_LOCAL_AUDIT proposed=%d predictedPositive=%d stageInPositive=%d directionalAgreement=%d meanPredictedImprovementPct=%.9f meanStageInImprovementPct=%.9f%%n",
+                "FLA_CRITICAL_LOCAL_AUDIT proposed=%d predictedPositive=%d stageInPositive=%d directionalAgreement=%d meanPredictedImprovementPct=%.9f meanStageInImprovementPct=%.9f%n",
                 proposed,proxyImproves,trueImproves,agreement,meanProxyDelta,meanTrueDelta);
     }
 
