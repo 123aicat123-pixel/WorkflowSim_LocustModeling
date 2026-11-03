@@ -97,11 +97,25 @@ public final class FLAFixedMappingReplay {
         }
         if(output.getParent()!=null)Files.createDirectories(output.getParent());
         final boolean taskTrace=Boolean.getBoolean("dagfla.fixedTaskTrace");
+        final boolean readyTrace=Boolean.getBoolean("dagfla.readyQueueDiagnostic");
+        if(readyTrace&&!taskTrace)
+            throw new IllegalArgumentException("readyQueueDiagnostic requires fixedTaskTrace for original Task-ID validation");
+        final Path readyFile=Paths.get(output.toString().replaceFirst("\\.csv$","")+"_ready.csv");
         final Path taskTraceFile=Paths.get(output.toString().replaceFirst("\\.csv$","")+"_tasks.csv");
         Log.disable();
         try(BufferedWriter writer=Files.newBufferedWriter(output,StandardCharsets.UTF_8);
             BufferedWriter taskWriter=taskTrace
-                ?Files.newBufferedWriter(taskTraceFile,StandardCharsets.UTF_8):null) {
+                ?Files.newBufferedWriter(taskTraceFile,StandardCharsets.UTF_8):null;
+            BufferedWriter readyWriter=readyTrace
+                ?Files.newBufferedWriter(readyFile,StandardCharsets.UTF_8):null) {
+            if(readyTrace)readyWriter.write(
+                "workflow,seed,algorithm,candidate_index,speed,mapping,"
+                +"insertion_makespan,ready_queue_makespan,actual_makespan,"
+                +"insertion_cost,ready_queue_cost,actual_cost,"
+                +"insertion_task_mae_start,ready_task_mae_start,"
+                +"insertion_task_mae_finish,ready_task_mae_finish,"
+                +"insertion_makespan_abs_pct,ready_makespan_abs_pct,"
+                +"insertion_cost_abs_pct,ready_cost_abs_pct\n");
             if(taskTrace)taskWriter.write("workflow,seed,algorithm,candidate_index,speed,task_id,vm_id,"
                 +"planned_start,planned_finish,actual_start,actual_finish,actual_cpu_time,"
                 +"nominal_compute_seconds,cpu_minus_nominal_compute_signed_seconds,start_error,finish_error\n");
@@ -159,6 +173,44 @@ public final class FLAFixedMappingReplay {
                            actual[1]-planStart,actual[2]-planFinish));
                     }
                     taskWriter.flush();
+                }
+                if(readyTrace) {
+                    int n=metrics.traceTaskIds.length;
+                    if(metrics.readyQueueStarts==null||metrics.readyQueueFinishes==null||
+                            metrics.readyQueueStarts.length!=n||metrics.readyQueueFinishes.length!=n||
+                            !(metrics.readyQueueMakespan>0)||!(metrics.readyQueueCost>=0))
+                        throw new IllegalStateException("Missing ready-queue diagnostic result");
+                    double oldStart=0,newStart=0,oldFinish=0,newFinish=0;
+                    for(int i=0;i<n;i++) {
+                        int taskId=metrics.traceTaskIds[i];
+                        double[] actual=result.fixedTaskActualTimeline.get(taskId);
+                        if(actual==null)throw new IllegalStateException("Missing real task "+taskId);
+                        if(metrics.readyQueueFinishes[i]<metrics.readyQueueStarts[i]||
+                                !Double.isFinite(metrics.readyQueueStarts[i])||
+                                !Double.isFinite(metrics.readyQueueFinishes[i]))
+                            throw new IllegalStateException("Invalid alternative task time");
+                        oldStart+=Math.abs(metrics.tracePlannedStarts[i]-actual[1]);
+                        newStart+=Math.abs(metrics.readyQueueStarts[i]-actual[1]);
+                        oldFinish+=Math.abs(metrics.tracePlannedFinishes[i]-actual[2]);
+                        newFinish+=Math.abs(metrics.readyQueueFinishes[i]-actual[2]);
+                    }
+                    double baselineM=metrics.stageInAwareMakespan;
+                    double newM=metrics.readyQueueMakespan;
+                    double realM=result.makespan;
+                    double baselineC=metrics.stageInAwareCost;
+                    double newC=metrics.readyQueueCost;
+                    double realC=result.cost;
+                    readyWriter.write(String.format(Locale.ROOT,
+                        "%s,%d,%s,%d,%s,%s,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,"
+                        +"%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g%n",
+                        workflow,seed,algorithm,k,profile,raw,
+                        baselineM,newM,realM,baselineC,newC,realC,
+                        oldStart/n,newStart/n,oldFinish/n,newFinish/n,
+                        Math.abs(baselineM-realM)/realM*100,
+                        Math.abs(newM-realM)/realM*100,
+                        Math.abs(baselineC-realC)/realC*100,
+                        Math.abs(newC-realC)/realC*100));
+                    readyWriter.flush();
                 }
                 double[] measured={metrics.chosenMakespan,metrics.chosenCost,
                         result.makespan,result.cost};
