@@ -1,0 +1,120 @@
+name: Diagnose FLA v6 versus scalar FLA on Montage 100-task Pareto geometry
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-montage100-front-audit.yml']
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  geometry-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable 100-task seeds 1-2
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41512322414
+          github-token: ${{ github.token }}
+          pattern: v6-100-*
+          path: data/first
+          merge-multiple: false
+      - name: Download immutable 100-task seeds 3-5
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41513299770
+          github-token: ${{ github.token }}
+          pattern: v6-100ext-*
+          path: data/second
+          merge-multiple: false
+      - name: Compute planned and simulated Pareto-front geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,math,pathlib,collections,statistics
+          files=list(pathlib.Path('data').rglob('*_replays.csv'))
+          assert len(files)==25,len(files)
+          group=collections.defaultdict(list)
+          for p in files:
+              with p.open(newline='') as f:
+                  for r in csv.DictReader(f):
+                      key=(r['workflow'],int(r['seed']),r['algorithm'])
+                      group[key].append((float(r['sim_makespan']),float(r['sim_cost']),
+                                         float(r['planned_makespan']),float(r['planned_cost'])))
+          assert len(group)==100,len(group)
+          algs=('DAG-Pareto-FLA[v6-pop]','FLA-3W','NSGA-II','MLEAO')
+          workflows=('Montage_100','CyberShake_100','Epigenomics_100','Inspiral_100','Sipht_100')
+          def nd(points):
+              xs=sorted(set(points))
+              return [x for x in xs if not any(y!=x and y[0]<=x[0] and y[1]<=x[1] for y in xs)]
+          def hv(points,ref):
+              prev=ref[1];area=0.0
+              for m,c in nd(points):
+                  if m>=ref[0] or c>=ref[1]:continue
+                  if c<prev:
+                      area+=(ref[0]-m)*(prev-c);prev=c
+              return area
+          refs={}
+          for w in workflows:
+              pool=[p for (wf,seed,alg),ps in group.items() if wf==w for p in ps]
+              refs[w]=(1.05*max(x[0] for x in pool)+1,1.05*max(x[1] for x in pool)+1)
+          rows=[]
+          for w in workflows:
+              for seed in range(1,6):
+                  for alg in algs:
+                      p=group[(w,seed,alg)]
+                      assert p
+                      sim=nd([(x[0],x[1]) for x in p])
+                      planned=nd([(x[2],x[3]) for x in p])
+                      rows.append(dict(workflow=w,seed=seed,algorithm=alg,
+                          planned_survivors=len(p),sim_nd=len(sim),plan_nd=len(planned),
+                          min_sim_makespan=min(x[0] for x in sim),
+                          min_sim_cost=min(x[1] for x in sim),
+                          max_sim_makespan=max(x[0] for x in sim),
+                          max_sim_cost=max(x[1] for x in sim),
+                          sim_hv=hv(sim,refs[w])))
+          assert len(rows)==100
+          with pathlib.Path('reports/front_geometry_raw.csv').open('w',newline='') as f:
+              wr=csv.DictWriter(f,fieldnames=list(rows[0]));wr.writeheader();wr.writerows(rows)
+          report=['# Simulator Pareto geometry: Montage_100 failure analysis',
+                  '',
+                  'Source: immutable 5-workflow x 5-seed 100-task simulator replays from runs 41512322414 and 41513299770.',
+                  'Each point comes from the search-visited PLANNED nondominated subset, not every visited assignment.',
+                  'The reference point for HV is frozen within a workflow across all four solvers and five seeds.',
+                  '',
+                  '## Montage_100 per-seed FLA-3W versus v6',
+                  '',
+                  '| Seed | v6 front size | FLA-3W front size | v6 min makespan | FLA min makespan | v6 min cost | FLA min cost | v6 HV relative to FLA |',
+                  '|---|---:|---:|---:|---:|---:|---:|---:|']
+          for seed in range(1,6):
+              v=next(r for r in rows if r['workflow']=='Montage_100' and r['seed']==seed and r['algorithm']==algs[0])
+              f=next(r for r in rows if r['workflow']=='Montage_100' and r['seed']==seed and r['algorithm']==algs[1])
+              report.append(f'| {seed} | {v["sim_nd"]} | {f["sim_nd"]} | {v["min_sim_makespan"]:.3f} | {f["min_sim_makespan"]:.3f} | {v["min_sim_cost"]:.3f} | {f["min_sim_cost"]:.3f} | {100*(v["sim_hv"]/f["sim_hv"]-1):+.3f}% |')
+          report+=['','## Family-level mean geometry and extremes','',
+                   '| Workflow | Solver | Mean simulator ND size | Mean min makespan | Mean min cost | Mean HV |',
+                   '|---|---|---:|---:|---:|---:|']
+          for w in workflows:
+              for alg in algs:
+                  g=[r for r in rows if r['workflow']==w and r['algorithm']==alg]
+                  def avg(field):return statistics.mean(r[field] for r in g)
+                  report.append(f'| {w} | {alg} | {avg("sim_nd"):.2f} | {avg("min_sim_makespan"):.3f} | {avg("min_sim_cost"):.3f} | {avg("sim_hv"):.3f} |')
+          report+=['','## Interpretation limits',
+                   'The number of Pareto points is not the same as HV: a solver with fewer well-placed extremal points can dominate HV.',
+                   'These are after-the-fact descriptive mechanisms, not controlled causal or algorithm-superiority evidence.',
+                   'Raw numerical features are available in the companion CSV.']
+          pathlib.Path('reports/front_geometry.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/front_geometry.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: montage100-front-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
