@@ -1,0 +1,171 @@
+name: v12 HV-bandit held-out validation versus equally seeded NSGA-II
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v12-heldout-fairness.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  three-arm:
+    name: Fair three-arm ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_100, Inspiral_100]
+        seed: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile current research source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Search 3 arms with same two starting schedules and 3030 evaluations
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            'Output&Results/v12fair_${{ matrix.workflow }}_s${{ matrix.seed }}' v12-fair-pair \
+            2>&1 | tee ci-logs/fair-v12.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/fair-v12.log
+      - name: Check exact budgets and all independent replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,csv,math
+          root=pathlib.Path('Output&Results')
+          prefix='v12fair_${{ matrix.workflow }}_s${{ matrix.seed }}'
+          def read(s):
+              with (root/(prefix+s)).open(newline='') as f:return list(csv.DictReader(f))
+          rows=read('_summary.csv');replays=read('_replays.csv')
+          expected={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(rows)==3 and {x['algorithm'] for x in rows}==expected
+          assert all(int(x['evaluations'])==int(x['captured_evaluations'])==3030 for x in rows)
+          assert len(replays)==sum(int(x['replayed']) for x in rows)
+          assert {x['algorithm'] for x in replays}==expected
+          for r in replays:
+              assert math.isfinite(float(r['sim_makespan'])) and float(r['sim_makespan'])>0
+              assert math.isfinite(float(r['sim_cost'])) and float(r['sim_cost'])>0
+              for obj in ('makespan','cost'):
+                  a=float(r['planned_'+obj]);b=float(r['independent_planned_'+obj])
+                  assert abs(a-b)<=1e-6*max(1,abs(b)),r
+          print('PASS triple matched initialization and 3030 true evaluations per solver')
+          PY
+      - name: Preserve evidence even on failure
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v12fair-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/v12fair_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+          retention-days: 90
+          if-no-files-found: warn
+  aggregate:
+    name: v12 held-out paired simulator HV report
+    needs: three-arm
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v12fair-*-${{ github.run_id }}
+          path: inputs
+          merge-multiple: false
+      - name: Recompute frozen HV shared across all solvers and seeds per workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import csv,pathlib,statistics,collections,math
+          files=list(pathlib.Path('inputs').rglob('*_replays.csv'))
+          sums=list(pathlib.Path('inputs').rglob('*_summary.csv'))
+          assert len(files)==len(sums)==6,(len(files),len(sums))
+          group=collections.defaultdict(list)
+          wfset={'Epigenomics_100','Inspiral_100'}
+          names=['DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]']
+          for p in files:
+              with p.open(newline='') as f: rows=list(csv.DictReader(f))
+              assert rows,p
+              for r in rows:
+                  wf,seed,alg=r['workflow'],int(r['seed']),r['algorithm']
+                  assert wf in wfset and seed in (1,2,3) and alg in names
+                  m,c=float(r['sim_makespan']),float(r['sim_cost'])
+                  assert math.isfinite(m) and math.isfinite(c) and m>0 and c>0
+                  group[(wf,seed,alg)].append((m,c))
+          assert len(group)==18,(len(group),group.keys())
+          for p in sums:
+              with p.open(newline='') as f: rows=list(csv.DictReader(f))
+              assert len(rows)==3 and {x['algorithm'] for x in rows}==set(names)
+              assert all(int(x['evaluations'])==int(x['captured_evaluations'])==3030 for x in rows)
+          def nd(points):
+              u=sorted(set(points))
+              return [p for p in u if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in u)]
+          def hv(points,ref):
+              total=0.0;last=ref[1]
+              for m,c in nd(points):
+                  if m<ref[0] and c<last:
+                      total+=(ref[0]-m)*(last-c)
+                      last=c
+              return total
+          refs={}
+          for wf in wfset:
+              allpoints=[p for (w,s,a),points in group.items() if w==wf for p in points]
+              refs[wf]=(max(p[0] for p in allpoints)*1.05+1,
+                        max(p[1] for p in allpoints)*1.05+1)
+          vals={key:hv(points,refs[key[0]]) for key,points in group.items()}
+          report=['# v12 held-out validation: three equal-initialization solvers',
+             '',
+             'Two additional DAG families, three seeds each, shared reference per family across all three solvers. These families were previously used in other research, so this is a variant holdout only.',
+             'All solvers have identical first two task assignments for costseed, 3030 true objective evaluations, independent WorkflowSim replay. The bandit uses PLANNING Pareto-HV reward, not actual simulator HV during search.',
+             'Only planned-nondominated schedules were simulated, not the full evaluated set.',
+             '',
+             '| Family | v12 vs v7 paired HV mean | v12 wins / 3 | v12 vs cost-seeded NSGA-II mean | v12 wins / 3 |',
+             '|---|---:|---:|---:|---:|']
+          fullV7=[];fullNSGA=[];csvrows=[]
+          for wf in sorted(wfset):
+              v7diff=[];nsdiff=[]
+              for seed in (1,2,3):
+                  a=vals[(wf,seed,names[1])]
+                  b=vals[(wf,seed,names[0])]
+                  c=vals[(wf,seed,names[2])]
+                  v7diff.append(100*(a/max(1e-12,b)-1))
+                  nsdiff.append(100*(a/max(1e-12,c)-1))
+                  for alg in names:
+                      csvrows.append(dict(workflow=wf,seed=seed,algorithm=alg,
+                                          sim_hv=vals[(wf,seed,alg)],
+                                          ref_m=refs[wf][0],ref_c=refs[wf][1]))
+              fullV7+=v7diff;fullNSGA+=nsdiff
+              report.append(f'| {wf} | {statistics.mean(v7diff):+.3f}% | {sum(x>0 for x in v7diff)}/3 | {statistics.mean(nsdiff):+.3f}% | {sum(x>0 for x in nsdiff)}/3 |')
+          report.append(f'| **ALL 6** | **{statistics.mean(fullV7):+.3f}%** | **{sum(x>0 for x in fullV7)}/6** | **{statistics.mean(fullNSGA):+.3f}%** | **{sum(x>0 for x in fullNSGA)}/6** |')
+          report+=['','Do not treat a six-case post-development test as proof of broad statistical superiority.']
+          pathlib.Path('reports/v12_heldout_report.md').write_text('\n'.join(report)+'\n')
+          with pathlib.Path('reports/v12_heldout_hv.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(csvrows[0]));w.writeheader();w.writerows(csvrows)
+          print('\n'.join(report))
+          PY
+          cat reports/v12_heldout_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v12fair-report-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
