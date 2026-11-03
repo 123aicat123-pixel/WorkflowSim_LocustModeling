@@ -1,0 +1,141 @@
+name: FLA Priority-Aware Ready Decoder True WorkflowSim Falsification
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-aware-decoder-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  fixed-priority-predictor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [CyberShake_100, Montage_100, Sipht_60]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download uninstrumented actual simulator reference for exact frozen mappings
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41679712071
+          github-token: ${{ github.token }}
+          pattern: fla-ready-runtime-priority-${{ matrix.workflow }}-41679712071
+          path: original
+      - name: Clean compile and original/priority-ready hand-oracle regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes 'Output&Results' reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          for klass in org.workflowsim.planning.ReadyQueuePriorityForecastTest \
+            org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest \
+            org.workflowsim.scheduling.FLAFixedVmReadyPriorityTest \
+            org.workflowsim.planning.StageInAwareEvaluatorTest; do
+            java -cp 'build/classes:lib/*' "$klass" | tee -a reports/regression-tests.log
+          done
+      - name: Rerun exact same actual 12 mappings/policies with separate passive policy-aware predictions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in fifo shortest upward; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.fixedTaskTrace=true \
+              -Ddagfla.readyQueueDiagnostic=true \
+              -Ddagfla.priorityAwarePredictionDiagnostic=true \
+              -Ddagfla.fixedVmReadyPriority="$mode" \
+              -Dliwsa.vmSpeedProfile=default \
+              -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAReadyQueueCrossDagAudit \
+              '${{ matrix.workflow }}' "reports/${mode}.csv" \
+              > "reports/${mode}.log" 2>&1 || {
+                tail -90 "reports/${mode}.log"
+                exit 1
+              }
+          done
+          python3 - <<'PY'
+          import csv,math,pathlib,statistics
+          root=pathlib.Path("reports")
+          source=list(pathlib.Path('original').rglob('all_policy_pairs.csv'))
+          assert len(source)==1,source
+          def read(p):
+            with p.open(newline='') as f:return list(csv.DictReader(f))
+          source_cases=read(source[0])
+          mappings={'all_vm0','all_vm12','round_robin','stride7'}
+          predicted={}
+          result=[]
+          for mode in ('fifo','shortest','upward'):
+            rows=read(root/f'{mode}.csv')
+            assert {r['policy'] for r in rows}==mappings and len(rows)==4
+            for row in rows:
+              mapping=row['policy']
+              assert row['runtime_priority']==mode and row['workflow']=='${{ matrix.workflow }}'
+              if mode=='fifo':
+                archived=next(r for r in source_cases if r['assignment_policy']==mapping)
+                truth=(archived['fifo_actual_makespan'],archived['fifo_actual_cost'])
+              else:
+                archived=next(r for r in source_cases if r['assignment_policy']==mapping and r['runtime_priority']==mode)
+                truth=(archived['priority_actual_makespan'],archived['priority_actual_cost'])
+              for actual,previous in zip((row['actual_makespan'],row['actual_cost']),truth):
+                assert math.isclose(float(actual),float(previous),rel_tol=1e-6,abs_tol=1e-6),(mode,mapping,actual,previous)
+              for key in ('new_ready_makespan','policy_model_makespan','actual_makespan',
+                          'new_ready_cost','policy_model_cost','actual_cost',
+                          'policy_start_mae','policy_finish_mae',
+                          'new_makespan_abs_pct','policy_makespan_abs_pct',
+                          'new_cost_abs_pct','policy_cost_abs_pct'):
+                assert math.isfinite(float(row[key])) and float(row[key])>=0,(mode,mapping,key,row[key])
+              if mode=='fifo':
+                assert math.isclose(float(row['new_ready_makespan']),float(row['policy_model_makespan']),rel_tol=1e-10,abs_tol=1e-7)
+                assert math.isclose(float(row['new_ready_cost']),float(row['policy_model_cost']),rel_tol=1e-10,abs_tol=1e-7)
+              predicted[(mapping,mode)]=row
+              result.append(dict(workflow=row['workflow'],mapping=mapping,priority=mode,
+                  old_task_id_model_pct=float(row['new_makespan_abs_pct']),
+                  priority_aware_model_pct=float(row['policy_makespan_abs_pct']),
+                  delta_abs_error_pp=float(row['policy_makespan_abs_pct'])-float(row['new_makespan_abs_pct']),
+                  actual_makespan=float(row['actual_makespan']),
+                  priority_aware_makespan=float(row['policy_model_makespan']),
+                  old_task_id_model_cost_pct=float(row['new_cost_abs_pct']),
+                  priority_aware_model_cost_pct=float(row['policy_cost_abs_pct']),
+                  priority_task_mae_start_s=float(row['policy_start_mae']),
+                  priority_task_mae_finish_s=float(row['policy_finish_mae'])))
+          assert len(result)==12 and len(predicted)==12
+          with (root/'all_actual_priority_forecasts.csv').open('w',newline='') as f:
+            w=csv.DictWriter(f,fieldnames=list(result[0]))
+            w.writeheader();w.writerows(result)
+          out=['# Priority-aware forecast vs the same real WorkflowSim runtime priority',
+            '', 'Original fixed VM mappings and 12 actual simulator outcomes all match immutable historical run 41679712071. Predictor never used actual future data.',
+            '| Runtime policy | n | Original Task-ID ready model MAPE (%) | Priority-aware ready model MAPE (%) | Wins/Ties/Losses (cases) |',
+            '|---|---:|---:|---:|---:|']
+          for policy in ('fifo','shortest','upward'):
+            z=[r for r in result if r['priority']==policy]
+            d=[r['delta_abs_error_pp'] for r in z]
+            out.append(f"| {policy} | 4 | {statistics.mean(r['old_task_id_model_pct'] for r in z):.5f} | "
+             f"{statistics.mean(r['priority_aware_model_pct'] for r in z):.5f} | "
+             f"{sum(x<-1e-8 for x in d)}/{sum(abs(x)<=1e-8 for x in d)}/{sum(x>1e-8 for x in d)} |")
+          out+=['','## Predicted vs observed policy-induced makespan change on exact mapping']
+          for mapping in sorted(mappings):
+            base=predicted[(mapping,'fifo')]
+            for policy in ('shortest','upward'):
+              compare=predicted[(mapping,policy)]
+              real=100*(float(compare['actual_makespan'])/float(base['actual_makespan'])-1)
+              forecast=100*(float(compare['policy_model_makespan'])/float(base['policy_model_makespan'])-1)
+              out.append(f"- {mapping} {policy}: actual Δ={real:+.6f}%, predicted Δ={forecast:+.6f}%, "
+                f"sensitivity gap={forecast-real:+.6f} pp")
+          out+=['','Development falsification only; both models can be wrong and a smaller forecast MAPE cannot prove Pareto HV optimization improvement.']
+          (root/'priority_aware_fidelity_report.md').write_text('\n'.join(out)+'\n')
+          print('\n'.join(out))
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_PRIORITY_AWARE_DECODER_FROZEN_GATE_2026-11-04.md reports/frozen-protocol.md
+          cat reports/priority_aware_fidelity_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive full positive and negative per-policy cases
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-forecast-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
