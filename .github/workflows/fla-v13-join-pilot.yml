@@ -1,0 +1,98 @@
+name: v13 Join-Aware FLA Search Operator vs v12 and matched NSGA-II K16
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v13-join-pilot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: v13 ${{ matrix.workflow }} ${{ matrix.speed }} s${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        workflow: [CyberShake_50, Montage_50, Sipht_60]
+        speed: [default, staggered]
+        seed: [141, 142, 143]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and verify shared decoder and v13 arm activation preconditions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source_sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.DecoderInsertionRegressionTest
+      - name: v12 vs v13 search vs costseed NSGA-II same 3030 objective budget + K16 simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            "Output&Results/v13-search-${{ matrix.speed }}-${{ matrix.workflow }}-s${{ matrix.seed }}" \
+            v13-search-pair 2>&1 | tee ci-logs/search.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/search.log
+          grep -F 'FLA_JOIN_AWARE attempted=' ci-logs/search.log
+          python3 - <<'PY'
+          import pathlib,csv,re
+          p=pathlib.Path("Output&Results/v13-search-${{ matrix.speed }}-${{ matrix.workflow }}-s${{ matrix.seed }}")
+          with pathlib.Path(str(p)+"_summary.csv").open(newline="") as f:s=list(csv.DictReader(f))
+          with pathlib.Path(str(p)+"_replays.csv").open(newline="") as f:r=list(csv.DictReader(f))
+          assert len(s)==3 and len(r)==48
+          assert all(int(x["evaluations"])==int(x["captured_evaluations"])==3030 and int(x["replayed"])==16 for x in s)
+          assert {x["algorithm"] for x in s}=={"DAG-Pareto-FLA[v12-hvbandit]","DAG-Pareto-FLA[v13-join]","NSGA-II[costseed]"}
+          log=pathlib.Path("ci-logs/search.log").read_text()
+          m=re.search(r"FLA_JOIN_AWARE attempted=(\d+) changed=(\d+) evaluations=(\d+)",log)
+          assert m and int(m.group(1))>0 and int(m.group(3))==3030,(m,log[-2500:])
+          print("PASS v13 attempted",m.group(1),"changed",m.group(2),"and equal K16+3030 actual search")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v13-search-${{ matrix.workflow }}-${{ matrix.speed }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_visited_fingerprints.csv
+            Output&Results/*_budget_protocol.txt
+          retention-days: 90
+  report:
+    needs: compare
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v13-search-*-${{ github.run_id }}
+          path: inputs
+      - name: Score all actual WorkflowSim Pareto fronts, retain negatives and check fairness
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_v13_search_report.py inputs reports 2>&1 | tee reports/analysis.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/v13_search_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v13-search-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
