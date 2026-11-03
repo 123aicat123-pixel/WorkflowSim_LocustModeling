@@ -519,6 +519,8 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     private int[] decAssigned;
     private UnifiedScheduleEvaluator unifiedScheduleEvaluator;
     private StageInAwareScheduleEvaluator stageInAwareEvaluator;
+    /** Exactly the same opt-in alternative as FLA, OFF by default. */
+    private ReadyQueueScheduleEvaluator readyQueueEvaluator;
     /** Number of objective evaluations (genotype decodes) performed in this run. */
     protected long evaluationCount = 0;
 
@@ -562,6 +564,8 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
                 decEvStart, decEvFinish, decEvCount, decFinish, decAssigned);
         stageInAwareEvaluator = Boolean.getBoolean("workflowsim.planningStageInAware")
                 ? new StageInAwareScheduleEvaluator(taskOrder, vmList) : null;
+        readyQueueEvaluator=Boolean.getBoolean("dagfla.useReadyQueueObjective")
+                ?new ReadyQueueScheduleEvaluator(taskOrder,vmList):null;
     }
 
     
@@ -572,7 +576,11 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     protected double[] decode(int[] genotype) {
         evaluationCount++;
         double[] objectives = unifiedScheduleEvaluator.evaluate(genotype);
-        if(stageInAwareEvaluator!=null) {
+        if(readyQueueEvaluator!=null) {
+            ReadyQueueScheduleEvaluator.Result corrected=
+                    readyQueueEvaluator.evaluate(toAssignment(genotype));
+            objectives=new double[]{corrected.makespan,corrected.cost};
+        } else if(stageInAwareEvaluator!=null) {
             StageInAwareScheduleEvaluator.Result corrected =
                     stageInAwareEvaluator.evaluate(toAssignment(genotype));
             objectives=new double[]{corrected.makespan,corrected.cost};
