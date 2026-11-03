@@ -118,8 +118,19 @@ public final class FLAResearchExperiment {
         if (BUDGET_REPLAY_REPLICATE != 0 &&
                 (BUDGET_REPLAY_K == 0 || !"random".equals(BUDGET_REPLAY_POLICY)))
             throw new IllegalArgumentException("random replicate only applies to prospective random policy");
-        if (BUDGET_REPLAY_K > 0 && SCREENING_AUDIT_N > 0)
-            throw new IllegalArgumentException("Prospective K-limited replay cannot be combined with the extra-replay audit");
+        // An explicit research-only, two-phase diagnostic may replay a second
+        // separate stratum of planning-dominated/tied genotypes AFTER K planned
+        // candidates are frozen. This does NOT enter optimization or K16 HV.
+        // Historical behavior remains an error unless this extra flag is set.
+        if (BUDGET_REPLAY_K > 0 && SCREENING_AUDIT_N > 0 &&
+                !Boolean.getBoolean("dagfla.allowSeparateKPlusScreeningDiagnostic"))
+            throw new IllegalArgumentException(
+                "K-limited replay plus screening requires explicit separate diagnostic opt-in");
+        if (Boolean.getBoolean("dagfla.allowSeparateKPlusScreeningDiagnostic") &&
+                (BUDGET_REPLAY_K<=0 || SCREENING_AUDIT_N<=0 ||
+                 BUDGET_REPLAY_POLICY.startsWith("online-")))
+            throw new IllegalArgumentException(
+                "Separate K + screening diagnostic requires positive K, extra sample and nononline fixed replay policy");
         if (SCREENING_ALL_VISITED && (!SCREENING_INCLUDE_TIES || SCREENING_AUDIT_N == 0))
             throw new IllegalArgumentException("all-visited replay requires positive sample cap and including ties");
         Path prefix = Paths.get(args[4]);
