@@ -1,0 +1,106 @@
+name: v16 Counted FLA Bandit Opportunity Sham Controls K16
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v16-opportunity-pilot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: sham ${{ matrix.dag }} ${{ matrix.speed }} seed${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        dag: [Montage_25, CyberShake_30]
+        speed: [default, staggered]
+        seed: [181,182]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and test pure population and timeline semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD > ci-logs/source_sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FLAPopulationDiagnosticsTest
+          java -Dworkflowsim.planningStageInAware=true -cp 'build/classes:lib/*' org.workflowsim.planning.TimelineParetoNeighborTest
+      - name: Run six-arm same-budget actual WorkflowSim including counted duplicate shams
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.populationDiagnostics=true \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.dag }}' '${{ matrix.seed }}' 30 100 \
+            "Output&Results/v16-opportunity-${{ matrix.speed }}-${{ matrix.dag }}-s${{ matrix.seed }}" \
+            bandit-opportunity-sixarm 2>&1 | tee ci-logs/search.log
+          test "$(grep -c 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/search.log)" -eq 5
+          python3 - <<'PY'
+          import csv,pathlib,re
+          raw=pathlib.Path("ci-logs/search.log").read_text()
+          matches=[tuple(map(int,x)) for x in re.findall(
+            r"FLA_PAIRED_LOCAL mode=(\d+) trials=(\d+) changed=(\d+) dominates=(\d+) dominated=(\d+) incomparable=(\d+) gate=(\d+) rejected=(\d+) evaluations=(\d+)",raw)]
+          assert {x[0] for x in matches}=={1,2,3,4},matches
+          for mode,n,changed,win,lose,trade,gate,rejected,ev in matches:
+              assert n==1400 and ev==3030 and gate==0 and rejected==0 and win+lose+trade==n
+              if mode>=3:assert changed==0 and win==0 and lose==0 and trade==n
+              else:assert changed==n
+          p=pathlib.Path("Output&Results/v16-opportunity-${{ matrix.speed }}-${{ matrix.dag }}-s${{ matrix.seed }}")
+          with pathlib.Path(str(p)+"_summary.csv").open(newline="") as f:s=list(csv.DictReader(f))
+          with pathlib.Path(str(p)+"_replays.csv").open(newline="") as f:r=list(csv.DictReader(f))
+          with pathlib.Path(str(p)+"_population_diagnostics.csv").open(newline="") as f:d=list(csv.DictReader(f))
+          assert len(s)==6 and len(r)==96 and len(d)==505
+          assert all(int(z["evaluations"])==int(z["captured_evaluations"])==3030 and int(z["replayed"])==16 for z in s)
+          print("PASS counted sham duplicates, 3030 planned target evals + K16 actual simulator, 5x101 population traces")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v16-${{ matrix.dag }}-${{ matrix.speed }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_population_diagnostics.csv
+            Output&Results/*_budget_protocol.txt
+            Output&Results/*_visited_fingerprints.csv
+          retention-days: 90
+  report:
+    needs: compare
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fla-v16-*-${{ github.run_id }}
+          path: input
+      - name: Verify planned-only reference and all equal-budget K16 real outcomes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v16_opportunity_report.py
+          python3 scripts/fla_v16_opportunity_report.py input reports | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis_source_sha.txt
+          cat reports/v16_opportunity_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v16-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
