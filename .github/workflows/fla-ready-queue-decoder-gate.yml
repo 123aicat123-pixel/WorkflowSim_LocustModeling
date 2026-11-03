@@ -1,0 +1,116 @@
+name: FLA Isolated Ready-Queue Decoder Development Gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-ready-queue-decoder-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  fixed-decoder-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_46, CyberShake_100]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download frozen original K16 mapping source
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41626382711
+          github-token: ${{ github.token }}
+          pattern: v17-confirm-${{ matrix.workflow }}-default-s211-41626382711
+          path: original
+      - name: Build entire Java tree from scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Verify four-task hand oracle and old stage-in model
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/stagein-regression.log
+      - name: Replay immutable same mappings with both decoders read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t input < <(find original -type f -name 'v17-confirm-default-${{ matrix.workflow }}-s211_replays.csv')
+          test "${#input[@]}" -eq 1
+          cp "${input[0]}" reports/immutable_original_k16.csv
+          for arm in 'DAG-Pareto-FLA[v12-hvbandit]' 'NSGA-II[costseed]'; do
+            if [[ "$arm" == DAG* ]]; then tag=v12; else tag=nsga; fi
+            for speed in default staggered; do
+              java -Dworkflowsim.planningStageInAware=true \
+                -Ddagfla.fixedTaskTrace=true -Ddagfla.readyQueueDiagnostic=true \
+                -Dliwsa.vmSpeedProfile="$speed" -cp 'build/classes:lib/*' \
+                org.workflowsim.examples.planning.FLAFixedMappingReplay \
+                '${{ matrix.workflow }}' 211 "${input[0]}" "$arm" 2 \
+                "reports/${tag}_${speed}.csv" > "reports/${tag}_${speed}.log" 2>&1 || {
+                  tail -70 "reports/${tag}_${speed}.log"
+                  exit 1
+                }
+              test -s "reports/${tag}_${speed}_ready.csv"
+            done
+          done
+          python3 - <<'PY'
+          import csv,pathlib,statistics,math
+          root=pathlib.Path('reports')
+          all_rows=[]
+          for arm in ('v12','nsga'):
+            for speed in ('default','staggered'):
+              def read(x):
+                with (root/x).open(newline='') as f:return list(csv.DictReader(f))
+              rows=read(f'{arm}_{speed}_ready.csv')
+              real=read(f'{arm}_{speed}.csv')
+              assert len(rows)==len(real)==2
+              for a,b in zip(rows,real):
+                assert (a['mapping'],a['candidate_index'],a['algorithm'])==(b['mapping'],b['source_candidate_index'],b['algorithm'])
+                assert math.isclose(float(a['actual_makespan']),float(b['fixed_replay_actual_makespan']),rel_tol=1e-8)
+                assert math.isclose(float(a['actual_cost']),float(b['fixed_replay_actual_cost']),rel_tol=1e-8)
+                for key in ('insertion_makespan','ready_queue_makespan','actual_makespan',
+                            'insertion_cost','ready_queue_cost','actual_cost',
+                            'insertion_task_mae_start','ready_task_mae_start',
+                            'insertion_task_mae_finish','ready_task_mae_finish'):
+                  assert math.isfinite(float(a[key]))
+                all_rows.append(a)
+          assert len(all_rows)==8
+          with (root/'combined_decoders.csv').open('w',newline='') as f:
+            w=csv.DictWriter(f,fieldnames=list(all_rows[0]))
+            w.writeheader();w.writerows(all_rows)
+          report=['# Isolated ready-queue fixed-genotype development gate',
+              '', 'Original source 41626382711, full original WorkflowSim replay and default parity passed.',
+              'All old FLA/NSGA-II search and current default decoder unchanged.',
+              '| Original assignment source | Speed | N | Insertion mean abs Makespan error (%) | Ready-queue mean abs Makespan error (%) | Difference (ready−insertion, pp) |',
+              '|---|---|---:|---:|---:|---:|']
+          for arm,alg in (('v12','DAG-Pareto-FLA[v12-hvbandit]'),('nsga','NSGA-II[costseed]')):
+            for speed in ('default','staggered'):
+              z=[r for r in all_rows if r['algorithm']==alg and r['speed']==speed]
+              old=statistics.mean(float(x['insertion_makespan_abs_pct']) for x in z)
+              new=statistics.mean(float(x['ready_makespan_abs_pct']) for x in z)
+              report.append(f'| {arm} | {speed} | {len(z)} | {old:.5f} | {new:.5f} | {new-old:+.5f} |')
+          report+=['','## All eight case outcomes']
+          for r in all_rows:
+            report.append(f"- {r['algorithm']} {r['speed']} candidate {r['candidate_index']}: "
+              f"insertion {float(r['insertion_makespan_abs_pct']):.4f}%, "
+              f"ready {float(r['ready_makespan_abs_pct']):.4f}%, "
+              f"real Makespan {float(r['actual_makespan']):.6f}s")
+          report+=['','This is a familiar-DAG developer gate, NOT a holdout or a demonstration of FLA algorithm superiority.']
+          (root/'decoder_first_gate_report.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cat reports/decoder_first_gate_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve every task trace and developer result
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-ready-queue-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
