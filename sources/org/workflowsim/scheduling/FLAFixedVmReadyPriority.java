@@ -52,6 +52,48 @@ public final class FLAFixedVmReadyPriority {
         return score;
     }
 
+    /**
+     * Passive capture at the ONLY real dispatch decision point. Unlike raw
+     * pending-list reorder counters, this counts competition between at least
+     * two COMPUTE jobs assigned to a VM that is IDLE at this scheduling tick.
+     * No scheduler state is mutated, no random draw consumed.
+     */
+    public static void traceIdleVmChoices(List<? extends Cloudlet> original,
+            List<? extends Cloudlet> ranked,Map<Integer,CondorVM> vms) {
+        if(!Boolean.getBoolean("dagfla.priorityOpportunityTrace"))return;
+        java.util.TreeMap<Integer,CondorVM> orderedVms=new java.util.TreeMap<>(vms);
+        for(Map.Entry<Integer,CondorVM> entry:orderedVms.entrySet()) {
+            int vmId=entry.getKey();
+            CondorVM vm=entry.getValue();
+            if(vm.getState()!=org.workflowsim.WorkflowSimTags.VM_STATUS_IDLE)
+                continue;
+            int count=0;
+            int fifo=-1;
+            for(Cloudlet c:original) {
+                Task task=originalTask(c);
+                if(task==null||c.getVmId()!=vmId)continue;
+                if(fifo<0)fifo=task.getCloudletId();
+                count++;
+            }
+            if(count<2)continue;
+            int chosen=-1;
+            for(Cloudlet c:ranked) {
+                Task t=originalTask(c);
+                if(t!=null&&c.getVmId()==vmId) {
+                    chosen=t.getCloudletId();
+                    break;
+                }
+            }
+            if(chosen<0)
+                throw new IllegalStateException("Priority trace lost eligible task");
+            System.out.printf(java.util.Locale.ROOT,
+                "PRIORITY_OPPORTUNITY,%s,%.17g,%d,%d,%d,%d,%d%n",
+                System.getProperty("dagfla.fixedVmReadyPriority","fifo"),
+                org.cloudbus.cloudsim.core.CloudSim.clock(),vmId,count,fifo,chosen,
+                fifo==chosen?0:1);
+        }
+    }
+
     public static List<Cloudlet> ordered(List<? extends Cloudlet> pending) {
         if(pending==null)throw new IllegalArgumentException("No scheduler list");
         List<Cloudlet> result=new ArrayList<>(pending);
