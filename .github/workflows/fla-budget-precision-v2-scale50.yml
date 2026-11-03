@@ -1,0 +1,138 @@
+name: FLA precision-v2 frozen 50-task audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-budget-precision-v2-scale50.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate planned-only policies, HV monotonicity and reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import importlib.util,sys
+          s=importlib.util.spec_from_file_location('audit','scripts/fla_replay_budget_audit.py')
+          m=importlib.util.module_from_spec(s)
+          sys.modules['audit']=m
+          s.loader.exec_module(m)
+          C=m.Planned
+          pts=[C(str(i),float(i+2),float(60-i)) for i in range(45)]
+          assert m.front([(1,5),(2,6),(3,3),(5,2)])==[(1,5),(3,3),(5,2)]
+          assert abs(m.hv([(1,5),(3,3)],(6,7))-16)<1e-9
+          assert m.hv([(1,5)],(6,7))<=m.hv([(1,5),(3,3)],(6,7))
+          for policy in ('pareto-cover','half-cover-half-random','scalar-sweep','random'):
+              for k in (8,16,24,32):
+                  x=m.choose(pts,('unit',1,'FLA'),policy,k,0)
+                  y=m.choose(list(reversed(pts)),('unit',1,'FLA'),policy,k,0)
+                  assert len(x)==k
+                  assert [v.mapping for v in x]==[v.mapping for v in y],policy
+                  assert len(set(v.mapping for v in x))==k
+          print('PASS deterministic selection, Pareto HV, fixed budgets and input-order invariance')
+          PY
+  cross-family:
+    name: Scale-50 seed ${{ matrix.workflow }} s${{ matrix.seed }}
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [CyberShake_50, Inspiral_50, Montage_50]
+        seed: [44, 45]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and record SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Full visited genotype independent WorkflowSim replay for matched three-arm optimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.screeningAuditPerAlgorithm=256 \
+            -Ddagfla.screeningAuditIncludeTies=true \
+            -Ddagfla.screeningAuditAllVisited=true \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 8 9 \
+            'Output&Results/budget_${{ matrix.workflow }}_s${{ matrix.seed }}' \
+            v12-fair-pair 2>&1 | tee ci-logs/independent-replay.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/independent-replay.log
+      - name: Assert search budget and complete visited replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math
+          root=pathlib.Path('Output&Results')
+          prefix='budget_${{ matrix.workflow }}_s${{ matrix.seed }}'
+          def read(s):
+              with (root/(prefix+s)).open(newline='') as f:return list(csv.DictReader(f))
+          a=read('_summary.csv');b=read('_screening_summary.csv')
+          c=read('_replays.csv');d=read('_screening_samples.csv')
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(a)==len(b)==3
+          assert {r['algorithm'] for r in a}=={r['algorithm'] for r in b}==names
+          assert all(int(r['evaluations'])==int(r['captured_evaluations'])==80 for r in a)
+          assert len(c)==sum(int(r['replayed']) for r in a)
+          assert len(d)==sum(int(r['sampled']) for r in b)
+          by={r['algorithm']:r for r in a}
+          for r in b:
+              assert int(r['unique_visited'])==int(r['sampled'])+int(by[r['algorithm']]['replayed'])
+              assert int(r['sampled'])==sum(int(r[k]) for k in ('strict_planned_dominated','planned_tie_pool','other_planned_pool'))
+              assert 32<=int(r['unique_visited'])<=80
+          for r in c+d:
+              assert math.isfinite(float(r['sim_makespan'])) and float(r['sim_makespan'])>0
+              assert math.isfinite(float(r['sim_cost'])) and float(r['sim_cost'])>0
+          print('PASS full-history and equal optimization-call budgets')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: budget-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/budget_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+            Output&Results/budget_${{ matrix.workflow }}_s${{ matrix.seed }}_limitations.txt
+          retention-days: 90
+  aggregate:
+    name: Frozen-policy 50-task scale aggregate
+    needs: cross-family
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: budget-*-${{ github.run_id }}
+          path: input
+      - name: Freeze family reference and run same replay budget analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_replay_budget_audit.py input reports \
+            --phase scale50 --source-run '${{ github.run_id }}' \
+            2>&1 | tee reports/audit_stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          cat reports/replay_budget_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: budget-validation-report-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
