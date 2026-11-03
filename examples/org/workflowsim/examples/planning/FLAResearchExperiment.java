@@ -72,6 +72,8 @@ public final class FLAResearchExperiment {
         final List<Candidate> candidates = new ArrayList<>();
         int evals;
         long searchMs;
+        long policySelectionNanos;
+        long simulatorReplayNanos;
         String actualGenerations;
         int sourceFrontSize;
         int plannedNdCount;
@@ -185,6 +187,7 @@ public final class FLAResearchExperiment {
             final boolean feedback = BUDGET_REPLAY_K > 0 && BUDGET_REPLAY_POLICY.startsWith("online-");
             if (feedback && BUDGET_REPLAY_K < 5)
                 throw new IllegalArgumentException("online feedback requires K>=5");
+            long initialSelectionStartNanos=System.nanoTime();
             if (feedback)
                 run.feedbackPool.addAll(budgetedPlannedCoverage(run.allVisited,
                         Math.min(64,run.distinctObservedAssignments)));
@@ -199,6 +202,7 @@ public final class FLAResearchExperiment {
                                 ? budgetedExtremeBand3(run.allVisited,BUDGET_REPLAY_K)
                                 : budgetedPlannedCoverage(run.allVisited,BUDGET_REPLAY_K))
                     : plannedNondominated(run.candidates);
+            run.policySelectionNanos+=System.nanoTime()-initialSelectionStartNanos;
             if (BUDGET_REPLAY_K > 0 && !feedback && front.size() != BUDGET_REPLAY_K)
                 throw new IllegalStateException("Wrong prospective simulator replay call budget");
             run.candidates.clear(); run.candidates.addAll(front);
@@ -208,7 +212,9 @@ public final class FLAResearchExperiment {
             final int replayGoal = feedback ? BUDGET_REPLAY_K : front.size();
             for (int index=0;index<replayGoal;index++) {
                 if (feedback && index>=4) {
+                    long selectStart=System.nanoTime();
                     FeedbackChoice selection = chooseFeedbackMode(run.feedbackPool,run.candidates,BUDGET_REPLAY_POLICY);
+                    run.policySelectionNanos+=System.nanoTime()-selectStart;
                     if (selection==null || run.candidates.contains(selection.candidate))
                         throw new IllegalStateException("Nonunique online feedback candidate");
                     run.candidates.add(selection.candidate);
@@ -225,11 +231,13 @@ public final class FLAResearchExperiment {
                             warm.planned[0],warm.planned[1]));
                 }
                 Candidate c=run.candidates.get(index);
+                long simulatorStart=System.nanoTime();
                 LIWSABenchmarkExample.RunResult result = LIWSABenchmarkExample.runPlanning(
                         dax, Parameters.PlanningAlgorithm.LIWSA,
                         Parameters.SchedulingAlgorithm.STATIC,
                         "replay_" + run.algorithm.replace("-","_"), seed,
                         1, 0, Collections.singletonList(c.assignment));
+                run.simulatorReplayNanos+=System.nanoTime()-simulatorStart;
                 if (result == null || !c.assignment.equals(new TreeMap<>(result.assignment))) {
                     throw new IllegalStateException("Invalid exact-assignment replay: " + run.algorithm);
                 }
@@ -1028,13 +1036,15 @@ public final class FLAResearchExperiment {
     private static void save(String wf,long seed,int pop,int gens,int cap,Path prefix,
             List<Run> runs,double[] simRef,double[] planRef) throws IOException {
         try(BufferedWriter w=Files.newBufferedWriter(Paths.get(prefix+"_summary.csv"),StandardCharsets.UTF_8)){
-            w.write("workflow,algorithm,seed,population,generations,budget_cap,evaluations,source_archive,distinct_planned_nondominated,replayed,sim_nondominated,captured_evaluations,distinct_observed,sim_hv,planned_hv,sim_ref_m,sim_ref_c,plan_ref_m,plan_ref_c,search_ms,actual_generations\n");
+            w.write("workflow,algorithm,seed,population,generations,budget_cap,evaluations,source_archive,distinct_planned_nondominated,replayed,sim_nondominated,captured_evaluations,distinct_observed,sim_hv,planned_hv,sim_ref_m,sim_ref_c,plan_ref_m,plan_ref_c,search_ms,actual_generations,selection_ms,replay_ms,search_selection_replay_ms\n");
             for(Run r:runs) {
-                w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%d,%s%n",
+                w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%d,%s,%.6f,%.6f,%.6f%n",
                     wf,r.algorithm,seed,pop,gens,cap,r.evals,r.sourceFrontSize,r.plannedNdCount,
                     r.candidates.size(),r.simulatorFront.size(),r.capturedEvaluations,
                     r.distinctObservedAssignments,r.simHv,r.planHv,
-                    simRef[0],simRef[1],planRef[0],planRef[1],r.searchMs,r.actualGenerations));
+                    simRef[0],simRef[1],planRef[0],planRef[1],r.searchMs,r.actualGenerations,
+                    r.policySelectionNanos/1e6,r.simulatorReplayNanos/1e6,
+                    r.searchMs+(r.policySelectionNanos+r.simulatorReplayNanos)/1e6));
                 System.out.printf(Locale.ROOT,"RESULT %s %s simHV=%.8f planningHV=%.8f simND=%d evals=%d%n",
                     wf,r.algorithm,r.simHv,r.planHv,r.simulatorFront.size(),r.evals);
             }
