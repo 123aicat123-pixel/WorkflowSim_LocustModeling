@@ -32,6 +32,8 @@ public final class ReplaySelectorPrecisionParityTest {
         selection.setAccessible(true);
         Method scalarSelection = experiment.getDeclaredMethod("budgetedScalarSweep", List.class, int.class);
         scalarSelection.setAccessible(true);
+        Method extremeSelection = experiment.getDeclaredMethod("budgetedExtremeBand3", List.class, int.class);
+        extremeSelection.setAccessible(true);
         Field assignment = candidate.getDeclaredField("assignment");
         assignment.setAccessible(true);
 
@@ -78,6 +80,17 @@ public final class ReplaySelectorPrecisionParityTest {
                     scalarIds.append(mapping.get(1));
                 }
                 System.out.println("PARITYSWEEP|" + group.getKey() + "|" + k + "|" + scalarIds);
+                @SuppressWarnings("unchecked")
+                List<Object> extreme = (List<Object>) extremeSelection.invoke(null,group.getValue(),k);
+                if(extreme.size()!=k)throw new IllegalStateException("Wrong extreme-band3 selected size "+k);
+                StringBuilder extremeIds=new StringBuilder();
+                for(Object item:extreme) {
+                    @SuppressWarnings("unchecked")
+                    Map<Integer,Integer> mapping=(Map<Integer,Integer>)assignment.get(item);
+                    if(extremeIds.length()!=0)extremeIds.append(",");
+                    extremeIds.append(mapping.get(1));
+                }
+                System.out.println("PARITYBAND3|" + group.getKey() + "|" + k + "|" + extremeIds);
             }
         }
     }
