@@ -38,3 +38,9 @@ Largest single observed increase: `Montage_25`, seed `54`, cost-seeded NSGA-II *
 - Because policies select different candidates, equal K does not mean equal *wall-clock* cost. Measure optimizer time, selection time and independent simulator replay time separately.
 - Six paired workflow/seed cases are insufficient to establish broad statistical superiority. Expand unseen DAG families, independent seeds, VM heterogeneity and cost/communication regimes.
 - This is **real prospective K-limited replay**, but the search itself remains driven by the planned stage-in-aware estimator rather than simulator-in-loop feedback. Avoid calling it a fully simulator-guided optimizer.
+
+## Independent second-run reproducibility check
+
+- [Second GitHub Actions run 41584797207](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41584797207), source commit `3ad0109c5468ec5095ba5e9724103629c80ddd5d`, also completed **6/6 paired jobs successfully**.
+- Downloaded all six independent per-case artifacts and recomputed 2D non-dominated hypervolumes from **raw actual WorkflowSim makespan/cost CSV values** under one post-hoc shared union reference per family. The recomputed mean relative benefits match the primary report to displayed three decimal places: v7 **+3.312% (6/6)**, v12 **+2.617% (6/6)**, NSGA-II **+8.115% (6/6)**.
+- Exact recomputed means from the second run were **+3.31166%**, **+2.61658%**, and **+8.11508%**, respectively. A repeated deterministic run at the same seeds is **not** independent statistical replication; it does validate repeatability of the implementation and scoring procedure. Independent random seeds, pricing/VM regimes and workflow families remain necessary.
