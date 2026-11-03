@@ -23,7 +23,7 @@ jobs:
         with:
           run-id: 41626382711
           github-token: ${{ github.token }}
-          pattern: v17-confirm-default-${{ matrix.workflow }}-s211-41626382711
+          pattern: v17-confirm-${{ matrix.workflow }}-default-s211-41626382711
           path: original
       - name: Compile clean Java tree
         shell: bash
