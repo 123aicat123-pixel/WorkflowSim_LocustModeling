@@ -1,0 +1,43 @@
+name: Cross-language precision parity for prospective FLA replay selector
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-selector-precision-parity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile Java, create high-precision fixtures and record source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs
+          git rev-parse HEAD | tee ci-logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          python3 scripts/fla_selector_precision_parity.py generate ci-logs/precision_fixture.csv
+      - name: Compare exact selected genotype and order for Python versus real Java selector
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReplaySelectorPrecisionParityTest ci-logs/precision_fixture.csv \
+            2>&1 | tee ci-logs/java_selection.txt
+          python3 scripts/fla_selector_precision_parity.py verify ci-logs/precision_fixture.csv ci-logs/java_selection.txt \
+            2>&1 | tee ci-logs/parity_result.txt
+      - name: Preserve full evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-selector-precision-parity-${{ github.run_id }}
+          path: ci-logs/
+          retention-days: 90
+          if-no-files-found: error
