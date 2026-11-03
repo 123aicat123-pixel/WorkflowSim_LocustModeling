@@ -38,6 +38,20 @@ I inspected all 18 actual successful compare-job logs (not the aggregate HV repo
 
 This proves the candidate operator often materially altered search genotypes on Montage/Sipht and did not do so in CyberShake, explaining why aggregate improvement should not be attributed to universally active DAG sensitivity. **It does not prove why** CyberShake failed to change (e.g., transfer-size semantics, graph fan-in, zero effective measured traffic, or metadata extraction). A targeted no-search inspection of DAX joins and incoming file-edge metadata is needed to distinguish those mechanisms.
 
+## Targeted read-only DAX structure diagnosis (no additional optimization or simulator calls)
+
+Parsed original `config/dax/CyberShake_50.xml`, `Montage_50.xml` and `Sipht_60.xml` directly from the same `fla-baseline` branch. Counted each DAX `child`'s incoming `parent` links and matched each parent's declared OUTPUT filename with the child's INPUT filename exactly (the same dependency-file matching principle used by `prepareCriticalProxy`).
+
+| DAX | Declared jobs | Multi-parent join nodes | Parent edges entering joins | Matching positive-size producer→consumer file edges entering joins |
+|---|---:|---:|---:|---:|
+| CyberShake_50 | 50 | 2 | 44 | **0** |
+| Montage_50 | 50 | 32 | 96 | **96** |
+| Sipht_60 | 58 (despite filename) | 8 | 58 | **58** |
+
+Both CyberShake joins (`ID00000` and `ID00001`) have 22 listed parents but none has a matching declared producer OUTPUT file consumed as an INPUT by the join. Thus the operator's strict requirement for positive measured cross-VM parent-to-child traffic provides a direct structural explanation for its 0/6 genotype-change cases **under the original DAX metadata**, assuming WorkflowSim's parser retains these relationships as declared. This is a read-only source-file diagnosis, not a separate runtime instrumentation proof. The other DAGs have multiple join nodes with matched transfer files and exhibited positive operator changes.
+
+Important: `Sipht_60.xml` declares **58 jobs**, not 60. Benchmark labels should report actual DAX job count, and never silently assume the filename equals task count.
+
 ## Consequences
 
 1. **Reject v13 for production/default selection.** Do not silently set v13 as an improvement over v12. Its positive cases are insufficient given the prespecified negative mean and large regressions.
