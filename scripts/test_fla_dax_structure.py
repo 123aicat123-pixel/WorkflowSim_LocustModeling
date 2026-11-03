@@ -66,6 +66,16 @@ class StructureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicated"):
             self.run_dax(x)
 
+    def test_negative_runtime_suppresses_all_runtime_derived_metrics(self):
+        x=self.run_dax(FIXTURE.replace('id="B" runtime="3"', 'id="B" runtime="-3"'))
+        self.assertEqual(x["task_count"],3)
+        self.assertEqual(x["edge_count"],2)
+        self.assertEqual(x["invalid_dax_runtime_jobs"],1)
+        self.assertEqual(x["runtime_sum_dax"],"")
+        self.assertEqual(x["critical_path_runtime_dax"],"")
+        self.assertEqual(x["critical_runtime_share"],"")
+        self.assertEqual(x["work_span_parallelism_proxy"],"")
+
     def test_negative_file_size_keeps_topology_but_excludes_invalid_bytes(self):
         xml = FIXTURE.replace('file="p.bin" link="output" size="100"',
                               'file="p.bin" link="output" size="-9"')
