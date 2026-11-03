@@ -286,6 +286,8 @@ public final class FLAResearchExperiment {
             Files.write(protocol, Arrays.asList(
                     "PROSPECTIVE_REPLAY_BUDGET_K=" + BUDGET_REPLAY_K,
                     "PROSPECTIVE_REPLAY_POLICY=" + BUDGET_REPLAY_POLICY,
+                    "VM_SPEED_PROFILE=" + System.getProperty("liwsa.vmSpeedProfile","default"),
+                    "VM_PRICE_PROFILE=" + System.getProperty("liwsa.vmPriceProfile","default"),
                     "PROSPECTIVE_REPLAY_REPLICATE=" + BUDGET_REPLAY_REPLICATE,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
                     "Replay selection: " + BUDGET_REPLAY_POLICY +
