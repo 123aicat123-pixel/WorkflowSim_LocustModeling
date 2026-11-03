@@ -1,0 +1,116 @@
+name: New-seed K8 K16 K24 progressive real-WorkflowSim Pareto coverage
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-progressive-k-budget.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: Prospective K24 ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        workflow: [CyberShake_100, Epigenomics_100, Inspiral_100, Montage_100, Sipht_100]
+        seed: [72, 73]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and capture exact source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Perform 3030 search evaluations and EXACT 24 ordered real WorkflowSim replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.budgetReplayK=24 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            'Output&Results/progressive_${{ matrix.workflow }}_s${{ matrix.seed }}' \
+            v12-fair-pair 2>&1 | tee ci-logs/replay.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/replay.log
+          test "$(grep -c 'PASS prospective planned-only replay selection K=24' ci-logs/replay.log)" -eq 3
+      - name: Assert identical search budget, real replay count and valid ordered mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,collections,math,re
+          base=pathlib.Path('Output&Results')/('progressive_${{ matrix.workflow }}_s${{ matrix.seed }}')
+          def load(s):
+              with pathlib.Path(str(base)+s).open(newline='') as f:
+                  return list(csv.DictReader(f))
+          stat=load('_summary.csv')
+          reps=load('_replays.csv')
+          fingerprints=load('_visited_fingerprints.csv')
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(stat)==len(fingerprints)==3 and len(reps)==72
+          assert {r['algorithm'] for r in stat}=={r['algorithm'] for r in fingerprints}==names
+          assert collections.Counter(r['algorithm'] for r in reps)=={n:24 for n in names}
+          for r in stat:
+              assert int(r['evaluations'])==int(r['captured_evaluations'])==3030
+              assert int(r['replayed'])==24
+              ids=sorted(int(x['candidate_index']) for x in reps if x['algorithm']==r['algorithm'])
+              assert ids==list(range(1,25))
+              assert len({x['mapping'] for x in reps if x['algorithm']==r['algorithm']})==24
+          for r in fingerprints:
+              assert re.fullmatch('[0-9a-f]{64}',r['history_sha256'])
+          for r in reps:
+              assert all(math.isfinite(float(r[x])) and float(r[x])>0 for x in ('sim_makespan','sim_cost'))
+              for x in ('makespan','cost'):
+                  a=float(r['planned_'+x]);b=float(r['independent_planned_'+x])
+                  assert abs(a-b)<=1e-6*max(1,abs(b))
+          protocol=pathlib.Path(str(base)+'_budget_protocol.txt').read_text()
+          assert 'PROSPECTIVE_REPLAY_BUDGET_K=24' in protocol and 'PROSPECTIVE_REPLAY_POLICY=pareto-cover' in protocol
+          print('PASS three solver arms each with exactly 3030 planned evaluations and 24 actual WorkflowSim calls')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: progressive-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/progressive_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+            Output&Results/progressive_${{ matrix.workflow }}_s${{ matrix.seed }}_budget_protocol.txt
+          retention-days: 90
+          if-no-files-found: warn
+  summary:
+    runs-on: ubuntu-latest
+    needs: paired
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: progressive-*-${{ github.run_id }}
+          path: inputs
+      - name: Prefix HV K8 K16 K24 with fixed prior-study reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_progressive_k_frontier.py inputs reports \
+            2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/progressive_k_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: progressive-summary-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
