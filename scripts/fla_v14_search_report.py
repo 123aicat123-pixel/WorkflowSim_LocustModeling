@@ -137,7 +137,7 @@ def run(root,out):
         "Every pair still enters archive only through normal existing Pareto admission and the following global survivor selection; no uncounted objective oracle.",
         "","## Individual primary-reference comparisons (negative outcomes retained)",
         "","| DAG | VM | Seed | Timeline vs v12 | Timeline vs random | Random vs v12 | Timeline vs NSGA-II |",
-        "|---|---|---:|---:|---:|---:|---:|"]
+        "|---|---|---:|---:|---:|---:|---:|"])
     for x in cases:
         if x["reference_multiplier"]!=1.5:continue
         report.append(f"| {x['workflow']} | {x['vm_speed']} | {x['seed']} | {x['timeline_vs_v12_pct']:+.4f}% | {x['timeline_vs_random_pct']:+.4f}% | {x['random_vs_v12_pct']:+.4f}% | {x['timeline_vs_nsga_pct']:+.4f}% |")
