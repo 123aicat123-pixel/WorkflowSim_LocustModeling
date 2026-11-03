@@ -243,3 +243,43 @@ CyberShake_100: the same-initialization NSGA-II defeated v7 on all 3/3 paired se
 **Scientific implication:** v7's gain versus unseeded NSGA-II should NOT be described as FLA-specific optimizer superiority. Giving the same low-cost seeds to NSGA-II largely eliminates that gain in this limited six-pair probe. The initialization should be treated as a **shared heuristic baseline** in further scientific comparisons, and a stronger FLA-specific operator is still unproven. The current five-workflow, five-seed direct confirmation workflow `fla-v7-costseed-confirm.yml` must also be evaluated before any manuscript claim.
 
 V7 output and the counterfactual are purely experimental; the default `DAG_PARETO_FLA` and default NSGA-II planners have not been silently reconfigured.
+
+## V7 complete five-family confirmation and uncertainty (2026-11-03)
+
+The selected `v7-costseed` was compared directly to standard NSGA-II, discrete-adapted `FLA-3W`, and reconstructed `MLEAO` on **five 100-task DAX workflow instances × five seeds**. Search used population 30 and nominal 100 generations, with actual objective evaluations asserted between 2980 and 3060 (3030 for DAG-FLA and NSGA-II). All replayed scheduling assignments were independently run through WorkflowSim and checked for decoder consistency. One **common frozen simulator-HV reference per workflow** was used across all four algorithms and all five seeds; raw cases and reference coordinates are archived.
+
+| V7 costseed versus | Mean paired simulator-HV % across 25 cases | V7 wins |
+|---|---:|---:|
+| Unseeded NSGA-II | **+4.464%** | **17/25** |
+| FLA-3W | **+1.632%** | **12/25** |
+| reconstructed MLEAO | +41.811% | 22/25 |
+
+V7's relative HV versus unseeded NSGA-II by workflow: CyberShake_100 **+7.636% (5/5 wins)**, Epigenomics_100 **−0.463% (2/5)**, Inspiral_100 **+6.967% (5/5)**, Montage_100 **+11.650% (5/5)**, Sipht_100 **−3.473% (0/5)**. FLA-3W remains better on Montage_100 by **9.263%** (v7 0/5 wins) despite v7's gains over earlier FLA variants.
+
+[25 complete five-family simulator replay runs, aggregated frozen HV and raw CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41561219538).
+
+**More conservative family-based uncertainty** calculated independently from immutable simulator replay CSVs:
+
+| V7 versus | Mean paired % | Exploratory 95% family-block bootstrap interval | Five-family sign-flip two-sided p |
+|---|---:|---:|---:|
+| NSGA-II | +4.464% | **[−0.649%, +9.108%]** | 0.2500 |
+| FLA-3W | +1.632% | [−5.833%, +11.455%] | 1.0000 |
+| reconstructed MLEAO | +41.811% | [+16.613%, +70.693%] | 0.1250 |
+
+With only five workflow families, these tests are coarse and **not confirmatory**, especially because earlier variants were repeatedly tuned on similar families. No stable superiority to NSGA-II/FLA-3W is established.
+
+**Frozen reference sensitivity (same exact observed simulation points)**:
+
+| Common worst-observed reference multiplier | V7 minus NSGA-II, mean paired % | V7 minus FLA-3W, mean paired % |
+|---|---:|---:|
+| 1.02 | +6.854% | +2.177% |
+| 1.05 | +4.464% | +1.632% |
+| 1.10 | +2.253% | +1.022% |
+| 1.20 | +0.297% | +0.344% |
+| 1.50 | **−1.099%** | **−0.317%** |
+
+Thus a larger common reference point reverses the mean ranking of v7 versus NSGA-II even without changing a single schedule. Four of the 25 per-seed top-algorithm rankings changed under 1.50 versus 1.05. This sensitivity should be included in any paper. [Cluster-level statistics and five-reference-point robustness artifacts](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41561971589).
+
+**Non-negotiable fairness caveat:** matched `NSGA-II[costseed]` is an opt-in counterfactual (not canonical NSGA-II) using the same two cost-efficient initial VM mappings. The initial six-case control found v7 **+0.019%** mean paired HV and only **2/6** wins versus cost-seeded NSGA-II, whereas v7 beat unseeded NSGA-II by +7.366% and 6/6 in those same cases. Therefore the observed improvement is substantially explained by giving an optimizer better starting solutions; a FLA-specific search advantage **has not yet been isolated**.
+
+**Research status:** Engineering validation and objective evaluation are much stronger, but these experiments do not yet justify claiming Q1 journal publication or statistically significant superiority. The FLA code is a disclosed categorical-DAG adaptation, and MLEAO remains a reconstruction rather than a source-faithful independent replication. Primary simulated HV remains derived from planned-nondominated replay subsets rather than all visited schedules.
