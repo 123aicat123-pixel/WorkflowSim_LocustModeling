@@ -293,3 +293,29 @@ The test passed; thus the counterfactual does not merely use two similarly named
 [Actual code assertions, Java build and simulator output](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41562447756).
 
 An extended **five DAG × five seed** paired comparison of FLA v7 against identically cost-seeded NSGA-II was configured in `.github/workflows/fla-v7-full-fairness.yml`; retain its computed results and limitations separately rather than inferring conclusions from an in-progress run.
+
+## Full 25-pair matched-cost-initialization fairness result
+
+A full run of `FLAResearchExperiment ... fair-pair` compared the selected FLA `v7-costseed` against `NSGA-II[costseed]` using **identical first two low-cost initial task-to-VM assignment proposals** and **3030 fitness evaluations for EACH optimizer**, for all five 100-task DAG families and paired seeds 1 through 5. Every planned-nondominated candidate was independently replayed in WorkflowSim under the same stage-in-aware objective, with one common frozen simulator HV reference per workflow across BOTH solvers and all seeds.
+
+| 100-task DAG family | Mean v7 HV relative to NSGA-II[costseed] | V7 positive paired seeds |
+|---|---:|---:|
+| CyberShake_100 | **−1.767%** | 1/5 |
+| Epigenomics_100 | **−1.264%** | 1/5 |
+| Inspiral_100 | **−2.870%** | 0/5 |
+| Montage_100 | +1.528% | 4/5 |
+| Sipht_100 | +0.896% | 3/5 |
+| **All 25 paired cases** | **−0.695%** | **9/25** |
+
+An exploratory family-block bootstrap over the five family means produced **95% [−2.107%, +0.743%]**; the exact five-family sign-flip two-sided value was **p=0.4375**. This is not a confirmatory inferential analysis, because only five correlated families and tuned search variants are studied. The main scientific implication is unambiguous within the evaluated cases: **v7 did NOT demonstrate superiority to NSGA-II when the latter received exactly the same two low-cost proposal schedules.**
+
+[Complete 25-case pairwise replay logs, source SHA, per-candidate CSVs and common-reference HV aggregate](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41562247912).
+
+Crucial distinctions:
+
+- The earlier **+4.464%** v7 improvement over *unseeded* NSGA-II under the four-algorithm 1.05 reference is valid for that comparison, but must not be advertised as a FLA-specific operator improvement.
+- The `NSGA-II[costseed]` control has a different common reference point because its observed candidate outcomes differ from those of the original unseeded four-algorithm experiment. Compare **paired relative changes within each analysis**, not absolute HV values across different experiments.
+- A separate Java/WorkflowSim regression test passed an assertion that the **first TWO complete task-ID → VM-ID mappings are exactly equal** for both algorithms; neither received extra objective-search evaluations. [Seed identity verification](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41562447756).
+- FLA's search mechanisms, even with this promising initialization technique, still require an independently demonstrated gain over a fair equally initialized NSGA-II. The next experimental option, `v8`, explores FLA-specific Pareto extreme survivor preservation. It remains hypothetical until actual logs confirm any improvement.
+
+The default `NSGA-II` remains unseeded; `CONFIG_COST_SEEDING` is an opt-in fairness-test switch. Do not describe this GitHub fork as bit-identical to a user's local Windows checkout.
