@@ -1,0 +1,46 @@
+name: v17 New Synthetic DAG Holdout Frozen Preflight
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v17-new-synth-preflight.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate exact new topology files and validate structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          git rev-parse HEAD > reports/source_sha.txt
+          python3 scripts/fla_v17_new_synthetic_holdout.py --output-dir config/dax | tee reports/generator.log
+          python3 scripts/fla_dax_structure.py --dax-dir config/dax --workflows SynthNewWide_60 SynthNewDeep_60 --out reports/synthetic_dax_structure.csv | tee reports/parse.log
+          python3 - <<'PY'
+          import pathlib,csv,hashlib
+          with pathlib.Path("reports/synthetic_dax_structure.csv").open(newline="") as f:r=list(csv.DictReader(f))
+          assert len(r)==2
+          for x in r:
+              assert int(x["task_count"])==60
+              assert int(x["invalid_dax_file_size_references"])==0
+              assert int(x["invalid_dax_runtime_jobs"])==0
+              assert int(x["declared_job_count_mismatch"])==0
+              assert int(x["declared_child_count_mismatch"])==0
+              p=pathlib.Path("config/dax")/(x["workflow"]+".xml")
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==x["dax_sha256"]
+          print("PASS frozen synthetic two new DAG topology families and exact SHA-256 metadata")
+          PY
+          cat reports/generator.log >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-new-synthetic-preflight-${{ github.run_id }}
+          path: |
+            reports/
+            config/dax/SynthNewWide_60.xml
+            config/dax/SynthNewDeep_60.xml
+          retention-days: 90
