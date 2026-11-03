@@ -145,6 +145,7 @@ public class WorkflowDatacenter extends Datacenter {
                         job.getCloudletLength() / vm.getMips() + fileTransferTime);
             }
 
+            FLATaskEventTrace.emit("DATACENTER_SUBMIT", job, CloudSim.clock(), fileTransferTime);
             CloudletScheduler scheduler = vm.getCloudletScheduler();
             double estimatedFinishTime = scheduler.cloudletSubmit(job, fileTransferTime);
             updateTaskExecTime(job, vm);
