@@ -103,9 +103,33 @@ def sweep(items):
     ordered += [x for x in cover(items) if x in remainder]
     return ordered
 
+def extreme_band3(items,k):
+    """Pre-simulator ablation: up to three distinct points per planned objective extreme."""
+    assert k>0 and len({x.mapping for x in items})>=k
+    unique = list({x.mapping:x for x in reversed(items)}.values())[::-1]
+    quota=min(3,max(1,k//4))
+    picked=[]
+    for ordered in (sorted(unique,key=lambda x:(x.m,x.c,x.mapping)),
+                    sorted(unique,key=lambda x:(x.c,x.m,x.mapping))):
+        reserved=0
+        for x in ordered:
+            if reserved>=quota or len(picked)>=k:
+                break
+            if (x.m,x.c) not in {(y.m,y.c) for y in picked} and x not in picked:
+                picked.append(x)
+                reserved+=1
+    for x in cover(unique)[:min(len(unique),k+2*quota)]:
+        if len(picked)==k:break
+        if x not in picked:picked.append(x)
+    assert len(picked)==k and len({x.mapping for x in picked})==k
+    return picked
+
+
 def choose(items,key,policy,k,rep):
     if policy=='pareto-cover':
         result=cover(items)[:k]
+    elif policy=='extreme-band3':
+        result=extreme_band3(items,k)
     elif policy=='half-cover-half-random':
         start=cover(items)[:(k+1)//2]
         used={x.mapping for x in start}
