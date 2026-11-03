@@ -61,6 +61,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     /** v8: preserve genuine objective extremes from the evaluated parent/child pool. */
     public static boolean CONFIG_RESERVE_COST_EXTREME = false;
     public static boolean CONFIG_RESERVE_MAKESPAN_EXTREME = false;
+    /** v9: DAG-edge relocation, 0=off, 1=co-location, 2=separation, 3=two-group-directed. */
+    public static int CONFIG_EDGE_RELOCATION_MODE = 0;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -126,6 +128,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
+    private final int edgeRelocationMode;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -137,6 +140,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private int[][] allowed;
     private double[] importance;
     private double[][] optimisticServiceSeconds;
+    private int[] dagEdgeParent, dagEdgeChild;
+    private double[] dagEdgeWeight;
     private int n, group1Size;
     private List<Solution> group1, group2;
     private double alpha1 = 0.85;
@@ -167,6 +172,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         useCostExtremeGuidance = CONFIG_COST_EXTREME_GUIDANCE;
         reserveCostExtreme = CONFIG_RESERVE_COST_EXTREME;
         reserveMakespanExtreme = CONFIG_RESERVE_MAKESPAN_EXTREME;
+        edgeRelocationMode = CONFIG_EDGE_RELOCATION_MODE;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -194,7 +200,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
-        if (useResourceAwareMutation || useCostSeeding) prepareResourceHeuristic();
+        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0) prepareResourceHeuristic();
+        if (edgeRelocationMode != 0) prepareDagEdgeRelocation();
         if (!useDag) { Arrays.fill(importance, 1.0); }
         random = seed == null ? new Random() : new Random(seed);
         group1Size = (populationSize + 1) / 2;
@@ -285,6 +292,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         resourceAwareMutation(genes, isG1);
                     } else {
                         mutate(genes, mutationProbability);
+                    }
+                    if (edgeRelocationMode != 0 && random.nextDouble() < 0.45) {
+                        edgeRelocation(genes, isG1);
                     }
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
@@ -617,6 +627,108 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         double r = random.nextDouble();
         genes[k] = (r < 0.75 || second < 0) ? best
                 : (r < 0.95 || third < 0) ? second : third;
+    }
+
+    /**
+     * v9 research operator, NOT a source-FLA mathematical step:
+     *
+     * Edge-sensitive VM assignment: copy parent/child to a shared VM in
+     * the cost-oriented FLA group to reduce inter-VM dependency traffic;
+     * split a co-located parent/child to a lightly loaded VM in the
+     * makespan-oriented group. The proxy uses only task and VM metadata.
+     * The child receives exactly ONE normal shared-objective evaluation.
+     */
+    private void prepareDagEdgeRelocation() {
+        IdentityHashMap<Task,Integer> index = new IdentityHashMap<>();
+        for (int k=0;k<n;k++) index.put(taskOrder.get(k),k);
+        List<Integer> from = new ArrayList<>();
+        List<Integer> to = new ArrayList<>();
+        List<Double> weights = new ArrayList<>();
+        for(int child=0;child<n;child++) {
+            Task ct=taskOrder.get(child);
+            for(Task pt:ct.getParentList()) {
+                Integer parent=index.get(pt);
+                if(parent==null) continue;
+                double bytes=0.0;
+                for(FileItem output:pt.getFileList()) {
+                    if(output.getType()!=Parameters.FileType.OUTPUT)continue;
+                    for(FileItem input:ct.getFileList()) {
+                        if(input.getType()==Parameters.FileType.INPUT
+                                && output.getName().equals(input.getName())) {
+                            bytes+=input.getSize();
+                            break;
+                        }
+                    }
+                }
+                from.add(parent);
+                to.add(child);
+                // Avoid one huge edge monopolizing exploration; zero-file DAG
+                // edges still remain eligible.
+                weights.add(1.0+Math.log1p(Math.max(0.0,bytes/Consts.MILLION)));
+            }
+        }
+        dagEdgeParent=new int[from.size()];
+        dagEdgeChild=new int[to.size()];
+        dagEdgeWeight=new double[weights.size()];
+        for(int i=0;i<from.size();i++){
+            dagEdgeParent[i]=from.get(i);
+            dagEdgeChild[i]=to.get(i);
+            dagEdgeWeight[i]=weights.get(i);
+        }
+    }
+
+    private boolean taskAllowsVm(int task,int vm) {
+        for(int v:allowed[task])if(v==vm)return true;
+        return false;
+    }
+
+    private void edgeRelocation(int[] genes, boolean makespanGroup) {
+        if(dagEdgeWeight.length==0) return;
+        final boolean coLocate = edgeRelocationMode==1 ||
+                (edgeRelocationMode==3 && !makespanGroup);
+        // Under edgeRelocationMode=2 all groups use separation.
+        double total=0.0;
+        for(double w:dagEdgeWeight)total+=w;
+        for(int attempt=0;attempt<9;attempt++) {
+            double draw=random.nextDouble()*total;
+            int e=dagEdgeWeight.length-1;
+            for(int i=0;i<dagEdgeWeight.length;i++){
+                draw-=dagEdgeWeight[i];
+                if(draw<=0.0){e=i;break;}
+            }
+            int parent=dagEdgeParent[e],child=dagEdgeChild[e];
+            int parentVM=genes[parent],childVM=genes[child];
+            if(coLocate) {
+                if(parentVM==childVM)continue;
+                boolean moveChild=taskAllowsVm(child,parentVM);
+                boolean moveParent=taskAllowsVm(parent,childVM);
+                if(!moveChild && !moveParent)continue;
+                if(moveChild && moveParent){
+                    double costA=optimisticServiceSeconds[child][parentVM]*vmList.get(parentVM).getCost();
+                    double costB=optimisticServiceSeconds[parent][childVM]*vmList.get(childVM).getCost();
+                    if(costA<=costB)genes[child]=parentVM;
+                    else genes[parent]=childVM;
+                } else if(moveChild)genes[child]=parentVM;
+                else genes[parent]=childVM;
+                return;
+            }
+            if(parentVM!=childVM)continue;
+            double[] load=new double[vmList.size()];
+            for(int k=0;k<n;k++){
+                if(k!=child)load[genes[k]]+=optimisticServiceSeconds[k][genes[k]];
+            }
+            int best=-1;
+            double bestScore=Double.POSITIVE_INFINITY;
+            for(int alternative:allowed[child]){
+                if(alternative==parentVM)continue;
+                // Greedy scheduling proxy with modest randomized noise to
+                // retain exploration; no expensive fitness calls here.
+                double score=load[alternative]+optimisticServiceSeconds[child][alternative];
+                score*=0.90+0.20*random.nextDouble();
+                if(score<bestScore){bestScore=score;best=alternative;}
+            }
+            if(best>=0){genes[child]=best;return;}
+        }
     }
 
     /**
