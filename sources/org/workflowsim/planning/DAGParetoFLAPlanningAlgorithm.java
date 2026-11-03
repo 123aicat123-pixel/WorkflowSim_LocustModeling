@@ -88,6 +88,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public int steadyStateIterations;
         public int group1Size;
         public int group2Size;
+        public int edgeRelocationChanges;
         public double finalAlpha1;
         public double finalDiversity;
         public List<double[]> searchTrace; // {iteration, archiveSize, bestM, bestCost, diversity}
@@ -145,7 +146,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private int n, group1Size;
     private List<Solution> group1, group2;
     private double alpha1 = 0.85;
-    private int doCount, eoCount, ssoCount;
+    private int doCount, eoCount, ssoCount, edgeChangeCount;
 
     public DAGParetoFLAPlanningAlgorithm() {
         populationSize = CONFIG_POPULATION_SIZE;
@@ -209,7 +210,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         group1 = new ArrayList<>(initial.subList(0, group1Size));
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
         archive.clear(); searchTrace.clear();
-        doCount = 0; eoCount = 0; ssoCount = 0; alpha1 = 0.85;
+        doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; alpha1 = 0.85;
         for (Solution s : initial) { archiveConsider(s); }
         final Set<String> globalVisited = useNoveltyRepair && useGlobalHistory
                 ? new HashSet<String>() : null;
@@ -294,7 +295,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         mutate(genes, mutationProbability);
                     }
                     if (edgeRelocationMode != 0 && random.nextDouble() < 0.45) {
+                        int[] beforeRelocation = genes.clone();
                         edgeRelocation(genes, isG1);
+                        if (!Arrays.equals(beforeRelocation, genes)) edgeChangeCount++;
                     }
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
@@ -364,14 +367,15 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.steadyStateIterations = ssoCount;
         m.group1Size = group1.size();
         m.group2Size = group2.size();
+        m.edgeRelocationChanges = edgeChangeCount;
         m.finalAlpha1 = alpha1;
         m.finalDiversity = hammingDiversity(population());
         m.searchTrace = new ArrayList<>();
         for (double[] a : searchTrace) { m.searchTrace.add(a.clone()); }
         lastRun = m;
-        System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d%n",
+        System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d%n",
                 m.paretoFrontSize,m.chosenMakespan,m.chosenCost,m.objectiveEvaluations,
-                m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations);
+                m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges);
     }
 
     private List<Solution> population() {
