@@ -149,6 +149,15 @@ public final class FLAResearchExperiment {
                 Run seededNsga=runNsga(dax,seed,pop,gens,true);
                 assertCostSeedIdentity(seededFla,seededNsga);
                 runs.add(seededNsga);
+            } else if ("v12-nsga-ready-pair".equals(args[5])) {
+                // Research-only 2-arm parity: the same budget, deterministic
+                // cost seeds, and active decoder selected by JVM property.
+                // The existing behavior in every other mode is unchanged.
+                Run fla=runDag(dax,seed,pop,gens,"v12-hvbandit");
+                Run nsga=runNsga(dax,seed,pop,gens,true);
+                assertCostSeedIdentity(fla,nsga);
+                runs.add(fla);
+                runs.add(nsga);
             } else if ("v12-fair-pair".equals(args[5])) {
                 // Three-arm common-reference validation. The two seeded DAG
                 // variants and NSGA-II share EXACTLY the same deterministic
