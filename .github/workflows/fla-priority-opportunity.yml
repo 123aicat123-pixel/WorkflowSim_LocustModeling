@@ -124,3 +124,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: warn
+
+# Rerun unchanged 12-replay diagnostic after missing import was corrected; protocol frozen.
