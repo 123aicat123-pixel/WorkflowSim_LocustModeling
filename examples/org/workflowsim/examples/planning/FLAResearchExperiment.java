@@ -90,6 +90,8 @@ public final class FLAResearchExperiment {
         double auditHvGain;
         double simHv;
         double planHv;
+        final List<Candidate> feedbackPool = new ArrayList<>();
+        final List<String> feedbackTrace = new ArrayList<>();
         Run(String name) { algorithm = name; }
     }
 
@@ -103,7 +105,7 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
@@ -180,7 +182,15 @@ public final class FLAResearchExperiment {
             }
             // Only unique planned-nondominated schedules are replayed, equally.
             run.plannedNdCount = plannedNondominated(run.candidates).size();
-            List<Candidate> front = BUDGET_REPLAY_K > 0
+            final boolean feedback = BUDGET_REPLAY_K > 0 && "online-nearest-hv".equals(BUDGET_REPLAY_POLICY);
+            if (feedback && BUDGET_REPLAY_K < 5)
+                throw new IllegalArgumentException("online-nearest-hv requires K>=5");
+            if (feedback)
+                run.feedbackPool.addAll(budgetedPlannedCoverage(run.allVisited,
+                        Math.min(64,run.distinctObservedAssignments)));
+            List<Candidate> front = feedback
+                    ? new ArrayList<>(run.feedbackPool.subList(0,4))
+                    : BUDGET_REPLAY_K > 0
                     ? ("random".equals(BUDGET_REPLAY_POLICY)
                         ? budgetedRandomVisited(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm)
                         : "scalar-sweep".equals(BUDGET_REPLAY_POLICY)
@@ -189,13 +199,32 @@ public final class FLAResearchExperiment {
                                 ? budgetedExtremeBand3(run.allVisited,BUDGET_REPLAY_K)
                                 : budgetedPlannedCoverage(run.allVisited,BUDGET_REPLAY_K))
                     : plannedNondominated(run.candidates);
-            if (BUDGET_REPLAY_K > 0 && front.size() != BUDGET_REPLAY_K)
+            if (BUDGET_REPLAY_K > 0 && !feedback && front.size() != BUDGET_REPLAY_K)
                 throw new IllegalStateException("Wrong prospective simulator replay call budget");
             run.candidates.clear(); run.candidates.addAll(front);
             System.out.printf(Locale.ROOT,
                     "REPLAY %s %s seed=%d evaluations=%d archive=%d uniqueND=%d%n",
                     wf, run.algorithm, seed, run.evals, run.sourceFrontSize, front.size());
-            for (Candidate c : front) {
+            final int replayGoal = feedback ? BUDGET_REPLAY_K : front.size();
+            for (int index=0;index<replayGoal;index++) {
+                if (feedback && index>=4) {
+                    FeedbackChoice selection = chooseOnlineFeedback(run.feedbackPool,run.candidates);
+                    if (selection==null || run.candidates.contains(selection.candidate))
+                        throw new IllegalStateException("Nonunique online feedback candidate");
+                    run.candidates.add(selection.candidate);
+                    run.feedbackTrace.add(String.format(Locale.ROOT,
+                            "%s,%d,%d,online,%s,%s,%.17g,%.17g,%.17g",
+                            run.algorithm,index+1,index,canonicalMappingKey(selection.candidate),
+                            selection.nearestMapping,selection.predictedMakespan,
+                            selection.predictedCost,selection.predictedHvGain));
+                } else if (feedback) {
+                    Candidate warm=run.candidates.get(index);
+                    run.feedbackTrace.add(String.format(Locale.ROOT,
+                            "%s,%d,0,warm,%s,,%.17g,%.17g,0",
+                            run.algorithm,index+1,canonicalMappingKey(warm),
+                            warm.planned[0],warm.planned[1]));
+                }
+                Candidate c=run.candidates.get(index);
                 LIWSABenchmarkExample.RunResult result = LIWSABenchmarkExample.runPlanning(
                         dax, Parameters.PlanningAlgorithm.LIWSA,
                         Parameters.SchedulingAlgorithm.STATIC,
@@ -211,8 +240,10 @@ public final class FLAResearchExperiment {
                 valid(c.simulated);
                 valid(c.independentPlanned);
             }
+            if(feedback && run.candidates.size()!=BUDGET_REPLAY_K)
+                throw new IllegalStateException("Online K budget was not exhausted: "+run.candidates.size());
             List<double[]> actual = new ArrayList<>();
-            for (Candidate c : front) actual.add(c.simulated);
+            for (Candidate c : run.candidates) actual.add(c.simulated);
             run.simulatorFront = ndPoints(actual);
         }
         List<List<double[]>> allSim = new ArrayList<>();
@@ -241,15 +272,18 @@ public final class FLAResearchExperiment {
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
         if (BUDGET_REPLAY_K > 0) {
             saveVisitedFingerprints(wf,seed,prefix,runs);
+            if("online-nearest-hv".equals(BUDGET_REPLAY_POLICY))
+                saveFeedbackTrace(prefix,runs);
             Path protocol = Paths.get(prefix + "_budget_protocol.txt");
             Files.write(protocol, Arrays.asList(
                     "PROSPECTIVE_REPLAY_BUDGET_K=" + BUDGET_REPLAY_K,
                     "PROSPECTIVE_REPLAY_POLICY=" + BUDGET_REPLAY_POLICY,
                     "PROSPECTIVE_REPLAY_REPLICATE=" + BUDGET_REPLAY_REPLICATE,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
-                    "Pre-simulation selection: " + BUDGET_REPLAY_POLICY +
-                    " (Pareto max-min coverage, extreme-band3 reservation, scalar sweep, or seeded random)",
-                    "Selection never reads true simulator objective values; K is separate from optimizer evaluation counts",
+                    "Replay selection: " + BUDGET_REPLAY_POLICY +
+                    " (online-nearest-hv may use only already replayed simulated makespan; other policies are pre-simulation)",
+                    "Online mode starts with four fixed Pareto-cover schedules and uses past observations only for later choices",
+                    "No replay policy may read labels of unobserved assignments; K is separate from optimizer evaluations",
                     "Simulator HV reference in summary is shared across solver arms within this run only",
                     "This is NOT the full visited simulator Pareto front and not a registered reference point",
                     "The archive size column denotes source archive size; planned nondominated count is separate from replay count"
@@ -458,6 +492,94 @@ public final class FLAResearchExperiment {
                 w.write(wf+","+run.algorithm+","+seed+","+run.allVisited.size()+","+hex+"\n");
             }
         }
+    }
+
+
+    /** Audit decisions made BEFORE each real simulator replay, never future labels. */
+    private static void saveFeedbackTrace(Path prefix,List<Run> runs) throws IOException {
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_online_trace.csv"),StandardCharsets.UTF_8)) {
+            w.write("algorithm,step,observed_before,mode,mapping,nearest_observed_mapping,predicted_makespan,predicted_cost,predicted_hv_gain\n");
+            for(Run r:runs) {
+                if(r.feedbackTrace.size()!=BUDGET_REPLAY_K)
+                    throw new IllegalStateException("Online trace and simulator budget mismatch: "+r.algorithm);
+                for(String entry:r.feedbackTrace)w.write(entry+"\n");
+            }
+        }
+    }
+
+    private static final class FeedbackChoice {
+        final Candidate candidate;
+        final String nearestMapping;
+        final double predictedMakespan;
+        final double predictedCost;
+        final double predictedHvGain;
+        FeedbackChoice(Candidate c,String near,double m,double cost,double hv) {
+            candidate=c;nearestMapping=near;predictedMakespan=m;
+            predictedCost=cost;predictedHvGain=hv;
+        }
+    }
+
+    /**
+     * Pure sequential choice: read ONLY observations from already replayed genotypes.
+     * 1-nearest neighbor in normalized PLANNED makespan/cost provides a multiplicative
+     * makespan residual, shrunk by half and capped at +/-10%; planned cost unchanged.
+     * Among up to 64 planned-coverage candidates, maximize predicted marginal HV
+     * against the ACTUALLY observed simulator front. Ties favor planned diversity.
+     * All constants are fixed before the new holdout seed cohort.
+     */
+    private static FeedbackChoice chooseOnlineFeedback(List<Candidate> pool,List<Candidate> selected) {
+        if(pool.size()<selected.size()+1 || selected.size()<4)
+            throw new IllegalStateException("Invalid online feedback candidate pool");
+        for(Candidate c:selected)
+            if(c.simulated==null)throw new IllegalStateException("Online selection attempted look-ahead");
+        double minM=Double.POSITIVE_INFINITY,maxM=0.,minC=Double.POSITIVE_INFINITY,maxC=0.;
+        for(Candidate c:pool) {
+            minM=Math.min(minM,c.planned[0]);maxM=Math.max(maxM,c.planned[0]);
+            minC=Math.min(minC,c.planned[1]);maxC=Math.max(maxC,c.planned[1]);
+        }
+        double spanM=Math.max(1e-12,maxM-minM),spanC=Math.max(1e-12,maxC-minC);
+        final double refM=1.5*maxM+1.,refC=1.5*maxC+1.;
+        List<double[]> observed=new ArrayList<>();
+        for(Candidate c:selected)observed.add(c.simulated);
+        final double observedHv=ParetoMetrics.hypervolume2D(ndPoints(observed),refM,refC);
+        FeedbackChoice best=null;
+        double bestSpacing=Double.NEGATIVE_INFINITY;
+        for(Candidate c:pool) {
+            if(selected.contains(c))continue;
+            Candidate nearest=null;
+            double nearestDistance=Double.POSITIVE_INFINITY;
+            double candidateSpacing=Double.POSITIVE_INFINITY;
+            for(Candidate seen:selected) {
+                double dM=(c.planned[0]-seen.planned[0])/spanM;
+                double dC=(c.planned[1]-seen.planned[1])/spanC;
+                double distance=dM*dM+dC*dC;
+                candidateSpacing=Math.min(candidateSpacing,distance);
+                if(nearest==null || Double.compare(distance,nearestDistance)<0 ||
+                        (Double.compare(distance,nearestDistance)==0 &&
+                         canonicalMappingKey(seen).compareTo(canonicalMappingKey(nearest))<0)) {
+                    nearest=seen;nearestDistance=distance;
+                }
+            }
+            double ratio=nearest.simulated[0]/nearest.planned[0];
+            double shrink=1.+0.5*(ratio-1.);
+            shrink=Math.min(1.1,Math.max(0.9,shrink));
+            double predictedM=c.planned[0]*shrink;
+            double predictedC=c.planned[1];
+            List<double[]> proposed=new ArrayList<>(observed);
+            proposed.add(new double[]{predictedM,predictedC});
+            double gain=Math.max(0.,ParetoMetrics.hypervolume2D(ndPoints(proposed),refM,refC)-observedHv);
+            if(best==null || Double.compare(gain,best.predictedHvGain)>0 ||
+                    (Double.compare(gain,best.predictedHvGain)==0 &&
+                     (Double.compare(candidateSpacing,bestSpacing)>0 ||
+                      (Double.compare(candidateSpacing,bestSpacing)==0 &&
+                       canonicalMappingKey(c).compareTo(canonicalMappingKey(best.candidate))<0)))) {
+                best=new FeedbackChoice(c,canonicalMappingKey(nearest),predictedM,predictedC,gain);
+                bestSpacing=candidateSpacing;
+            }
+        }
+        if(best==null)throw new IllegalStateException("No next online candidate");
+        return best;
     }
 
     /** Keep every DISTINCT genotype to quantify planned-front screening bias. */
