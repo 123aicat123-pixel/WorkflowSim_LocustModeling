@@ -1,0 +1,125 @@
+name: Check v10 local critical relocation direction under independent StageIn estimator
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-critical-local-direction.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Direction ${{ matrix.workflow }} ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_100, CyberShake_100, Sipht_100]
+        variant: [v10-critical, v10-guarded]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build all Java research sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes logs 'Output&Results'
+          git rev-parse HEAD | tee logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > logs/source-files.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @logs/source-files.txt 2>&1 | tee logs/javac.log
+      - name: Run 630-evaluation search and post-search directional counterfactual
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.criticalLocalAudit=true \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' 87 30 20 \
+            'Output&Results/local_${{ matrix.workflow }}_${{ matrix.variant }}' \
+            '${{ matrix.variant }}' 2>&1 | tee logs/local.log
+      - name: Confirm no extra optimizer fitness calls and count directional agreement
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,re,csv,math
+          text=pathlib.Path('logs/local.log').read_text()
+          pat=r'FLA_CRITICAL_LOCAL_AUDIT proposed=(\d+) predictedPositive=(\d+) stageInPositive=(\d+) directionalAgreement=(\d+) meanPredictedImprovementPct=([+-]?[\d.eE-]+) meanStageInImprovementPct=([+-]?[\d.eE-]+)'
+          found=re.findall(pat,text)
+          assert len(found)==1,found
+          n,p,t,a,pdelta,tdelta=found[0]
+          n,p,t,a=map(int,(n,p,t,a))
+          pdelta,tdelta=map(float,(pdelta,tdelta))
+          assert 0<n<=30 and 0<=p<=n and 0<=t<=n and 0<=a<=n
+          assert math.isfinite(pdelta) and math.isfinite(tdelta)
+          with pathlib.Path('Output&Results/local_${{ matrix.workflow }}_${{ matrix.variant }}_summary.csv').open(newline='') as f:
+              rows=list(csv.DictReader(f))
+          assert len(rows)==1 and int(rows[0]['evaluations'])==int(rows[0]['captured_evaluations'])==630
+          with pathlib.Path('logs/local_metrics.csv').open('w') as f:
+              f.write('workflow,variant,proposed,predicted_positive,stagein_positive,agreement,mean_predicted_gain_pct,mean_stagein_gain_pct\n')
+              f.write('${{ matrix.workflow }},${{ matrix.variant }},%d,%d,%d,%d,%.9f,%.9f\n'%(n,p,t,a,pdelta,tdelta))
+          print('PASS post-search only; no extra optimizer evaluations. Directional agreement:',a,'/',n)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: criticallocal-${{ matrix.workflow }}-${{ matrix.variant }}-${{ github.run_id }}
+          path: |
+            logs/
+            Output&Results/local_${{ matrix.workflow }}_${{ matrix.variant }}_*.csv
+          retention-days: 90
+
+  aggregate:
+    name: Directional agreement in three 100-task DAG families
+    needs: diagnose
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: criticallocal-*-${{ github.run_id }}
+          path: input
+          merge-multiple: false
+      - name: Pool pure post-search local-move diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv
+          files=list(pathlib.Path('input').rglob('local_metrics.csv'))
+          assert len(files)==6,files
+          rows=[]
+          for p in files:
+              with p.open(newline='') as f:rows+=list(csv.DictReader(f))
+          assert len(rows)==6
+          report=['# V10 local move prediction versus independent StageIn planning estimator',
+                  '',
+                  'Three 100-task workflows; 30 population, 20 generations, seed 87; 630 optimization fitness calls per run.',
+                  'AFTER optimizer search completes, each of up to 30 surviving genotypes receives one proposed v10 VM relocation.',
+                  'The post-search diagnostic independently computes StageInAwareScheduleEvaluator makespan before/after each proposal, without using the objective fitness method, archive, or recorder.',
+                  'These are additional **post-search** planning estimates and are NOT simulator replays or additional optimizer fitness calls.',
+                  'A local move can have excellent global correlation but poor local directional accuracy; this is a descriptive diagnostic.',
+                  '',
+                  '| Workflow | Variant | Proposed local moves | Predicted positives | Actual StageIn positives | Directional agreement | Mean predicted improvement % | Mean actual StageIn improvement % |',
+                  '|---|---|---:|---:|---:|---:|---:|---:|']
+          for r in sorted(rows,key=lambda z:(z['workflow'],z['variant'])):
+              report.append(f'| {r["workflow"]} | {r["variant"]} | {r["proposed"]} | {r["predicted_positive"]} | {r["stagein_positive"]} | {r["agreement"]}/{r["proposed"]} | {float(r["mean_predicted_gain_pct"]):+.3f}% | {float(r["mean_stagein_gain_pct"]):+.3f}% |')
+          pathlib.Path('reports/local_direction.md').write_text('\n'.join(report)+'\n')
+          with pathlib.Path('reports/local_direction.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
+          print('\n'.join(report))
+          PY
+          cat reports/local_direction.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: critical-local-direction-summary-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
