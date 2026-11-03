@@ -37,6 +37,14 @@ Reference 3×: timeline v15 vs ungated timeline +0.180978% (4/8); gated random v
 
 Notable negative case: Montage_25 staggered, seed 161, gated timeline vs v12 **−6.1381%**, versus NSGA-II **−6.5810%**. Positive case Montage_25 default seed 161, gated timeline vs ungated timeline **+3.7458%**, versus v12 **+2.7962%**. Do not cherry-pick either.
 
+## Independent, read-only genotype-diversity check
+
+A separate [GitHub Actions run 41618415780](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41618415780) successfully downloaded original eight v15 six-arm experiment job artifacts and recomputed distinct target-**evaluated** genotype counts and K16 simulator Pareto-front sizes without executing any new optimizer or simulator call. Artifact `v15-readonly-diversity-41618415780`, ID `13222695596`.
+
+Across the same eight blocks, v15 timeline-gated distinct **evaluated** assignments averaged **+0.805024%** versus v14 timeline-ungated; v15 random-gated averaged **+0.587563%** versus v14 random-ungated. v15 timeline averaged **96.415017%** unique assignments among its 3030 counted evaluation events. This refutes a simplistic claim that v15 necessarily reduced *observed total exploration*; it did not in these cases. Counts may change through stochastic trajectories and novelty repair.
+
+However, these counters include ALL evaluated neighbor candidates, even those rejected by v15's subsequent survivor gate. They cannot measure distinct individuals in each **selected breeding population**, which is the specific locus of the duplication hypothesis. The population-level diversity-loss mechanism remains **unverified**; do not present it as a demonstrated causal explanation of the negative HV. A future read-only per-generation population signature trace and subgroup diversity metric should be created before altering the gate again.
+
 ## Mechanism, limitations, research decision
 
 1. The local planned-Pareto gate was implemented and its rejection count per 1400 local trials was independently checked against actual strict-dominance counts in **every one** of the eight 6-arm jobs. The compiler, v14 one-call timeline regression, and 5 identical initial cost-seed assertions passed.
