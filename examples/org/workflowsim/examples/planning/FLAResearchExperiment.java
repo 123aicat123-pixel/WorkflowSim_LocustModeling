@@ -96,7 +96,12 @@ public final class FLAResearchExperiment {
         List<Run> runs = new ArrayList<>();
         final int cap = pop * (gens + 1) + 3 * pop + 6;
         if (args.length == 6) {
-            if ("nsga-only".equals(args[5])) {
+            if ("fair-pair".equals(args[5])) {
+                // Predeclared fairness mode: identical low-cost initialization,
+                // identical search budgets and simulator replay protocol.
+                runs.add(runDag(dax, seed, pop, gens, "v7-costseed"));
+                runs.add(runNsga(dax, seed, pop, gens, true));
+            } else if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, false));
             } else if ("nsga-costseed".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, true));
