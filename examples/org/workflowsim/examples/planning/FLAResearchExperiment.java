@@ -97,7 +97,9 @@ public final class FLAResearchExperiment {
         final int cap = pop * (gens + 1) + 3 * pop + 6;
         if (args.length == 6) {
             if ("nsga-only".equals(args[5])) {
-                runs.add(runNsga(dax, seed, pop, gens));
+                runs.add(runNsga(dax, seed, pop, gens, false));
+            } else if ("nsga-costseed".equals(args[5])) {
+                runs.add(runNsga(dax, seed, pop, gens, true));
             } else if ("fla-only".equals(args[5])) {
                 runs.add(runScalar(dax, seed, pop, gens));
             } else {
@@ -107,7 +109,9 @@ public final class FLAResearchExperiment {
             runs.add(runScalar(dax, seed, pop, gens));
             runs.add(runDag(dax, seed, pop, gens,
                     System.getProperty("dagfla.comparisonVariant", "all")));
-            runs.add(runNsga(dax, seed, pop, gens));
+            runs.add(runNsga(dax, seed, pop, gens, false));
+            if (Boolean.getBoolean("dagfla.includeCostSeededNsga"))
+                runs.add(runNsga(dax, seed, pop, gens, true));
             runs.add(runMleao(dax, seed, pop, gens));
         }
 
@@ -266,11 +270,12 @@ public final class FLAResearchExperiment {
         appendAuditHistory(r,capture);
         return r;
     }
-    private static Run runNsga(String dax,long seed,int pop,int gens) {
+    private static Run runNsga(String dax,long seed,int pop,int gens,boolean costSeeded) {
         NSGAIIPlanningAlgorithm.CONFIG_OUTPUT_ARCHIVE=true;
         NSGAIIPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS=null;
+        NSGAIIPlanningAlgorithm.CONFIG_COST_SEEDING=costSeeded;
         UnifiedCandidateRecorder.begin((long)pop*(gens+2));
-        UnifiedCandidateRecorder.phase("NSGA-II");
+        UnifiedCandidateRecorder.phase(costSeeded ? "NSGA-II-costseed" : "NSGA-II");
         LIWSABenchmarkExample.RunResult result=LIWSABenchmarkExample.runPlanning(
                 dax,Parameters.PlanningAlgorithm.NSGAII,Parameters.SchedulingAlgorithm.STATIC,
                 "NSGA-II",seed,pop,gens,null);
@@ -279,7 +284,7 @@ public final class FLAResearchExperiment {
         UnifiedCandidateRecorder.Capture capture=UnifiedCandidateRecorder.end();
         if(capture.evaluationCount()!=m.objectiveEvaluations)
             throw new IllegalStateException("NSGA-II source-counter and recorder mismatch");
-        Run r=new Run("NSGA-II");r.actualGenerations=String.valueOf(gens);r.evals=capture.evaluationCount();
+        Run r=new Run(costSeeded ? "NSGA-II[costseed]" : "NSGA-II");r.actualGenerations=String.valueOf(gens);r.evals=capture.evaluationCount();
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
         r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
