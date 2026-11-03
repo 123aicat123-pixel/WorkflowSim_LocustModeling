@@ -69,6 +69,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_CRITICAL_LOCAL_AUDIT = false;
     /** v11: FLA-phase-specific online Pareto-admission bandit; disabled by default. */
     public static boolean CONFIG_PHASE_OPERATOR_BANDIT = false;
+    /** v12 experimental alternative: reward actual surrogate Pareto-HV increment,
+     * not just binary archive admission. Uses NO extra fitness evaluations. */
+    public static boolean CONFIG_PHASE_HV_BANDIT = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -142,13 +145,14 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
     private final int edgeRelocationMode, criticalRelocationMode;
-    private final boolean usePhaseOperatorBandit;
+    private final boolean usePhaseOperatorBandit, usePhaseHvBandit;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
     private final List<double[]> criticalProxyPairs = new ArrayList<>();
     private final int[][] banditUses = new int[3][3];
     private final int[][] banditAdmissions = new int[3][3];
+    private final double[][] banditHvCredit = new double[3][3];
 
     private Random random;
     private FLAScheduleEvaluator evaluator;
@@ -193,7 +197,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         reserveMakespanExtreme = CONFIG_RESERVE_MAKESPAN_EXTREME;
         edgeRelocationMode = CONFIG_EDGE_RELOCATION_MODE;
         criticalRelocationMode = CONFIG_CRITICAL_RELOCATION_MODE;
-        usePhaseOperatorBandit = CONFIG_PHASE_OPERATOR_BANDIT;
+        usePhaseOperatorBandit = CONFIG_PHASE_OPERATOR_BANDIT || CONFIG_PHASE_HV_BANDIT;
+        usePhaseHvBandit = CONFIG_PHASE_HV_BANDIT;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -235,6 +240,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         for(int phase=0;phase<3;phase++) {
             Arrays.fill(banditUses[phase],0);
             Arrays.fill(banditAdmissions[phase],0);
+            Arrays.fill(banditHvCredit[phase],0.0);
         }
         for (Solution s : initial) { archiveConsider(s); }
         final Set<String> globalVisited = useNoveltyRepair && useGlobalHistory
@@ -344,10 +350,30 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 Solution child = new Solution(genes, evaluator.evaluate(genes));
                 if(criticalRelocationMode != 0)
                     criticalProxyPairs.add(new double[]{predictedCriticalMakespan, child.makespan});
+                // Fairness: v12 uses only the SAME child's already evaluated
+                // makespan/cost. The two HV calls are in-memory geometry only.
+                double hvBefore=0.0,refM=0.0,refC=0.0;
+                if(usePhaseHvBandit && banditArm>=0){
+                    for(Solution a:archive){
+                        refM=Math.max(refM,a.makespan);
+                        refC=Math.max(refC,a.cost);
+                    }
+                    refM=Math.max(refM,child.makespan)*1.20+1e-6;
+                    refC=Math.max(refC,child.cost)*1.20+1e-6;
+                    hvBefore=plannedArchiveHv(refM,refC);
+                }
                 archiveConsider(child); // ALL visited children, even if not selected
                 if(usePhaseOperatorBandit && banditArm>=0) {
                     banditUses[phase][banditArm]++;
                     if(archive.contains(child))banditAdmissions[phase][banditArm]++;
+                    if(usePhaseHvBandit) {
+                        double hvAfter=plannedArchiveHv(refM,refC);
+                        double gain=Math.max(0,hvAfter-hvBefore);
+                        // 1% relative HV gain per newly evaluated child is
+                        // assigned maximal credit. Bounded reward in [0,1].
+                        double normalized=Math.min(1.0,gain/Math.max(EPS,hvBefore*0.01));
+                        banditHvCredit[phase][banditArm]+=normalized;
+                    }
                 }
                 (isG1 ? children1 : children2).add(child);
             }
@@ -737,6 +763,24 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
      * the PLANNED nondominated archive, not a claim of simulator correctness.
      * With three separate UCB tables, DO/EO/SSO learn independently.
      */
+    /** Exact 2D HV of the PLANNED nondominated archive under a single,
+     * caller-supplied common reference. Does not evaluate a schedule. */
+    private double plannedArchiveHv(double referenceM,double referenceC) {
+        List<Solution> sorted=new ArrayList<>(archive);
+        sorted.sort(Comparator.comparingDouble((Solution x)->x.makespan)
+                .thenComparingDouble(x->x.cost));
+        double total=0.0;
+        double bestCost=referenceC;
+        for(Solution x:sorted) {
+            if(x.makespan>=referenceM || x.cost>=referenceC)continue;
+            if(x.cost<bestCost) {
+                total+=(referenceM-x.makespan)*(bestCost-x.cost);
+                bestCost=x.cost;
+            }
+        }
+        return total;
+    }
+
     private int chooseBanditArm(int phase) {
         int[] counts=banditUses[phase],wins=banditAdmissions[phase];
         for(int arm=0;arm<3;arm++)if(counts[arm]==0)return arm;
@@ -745,7 +789,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         double best=Double.NEGATIVE_INFINITY;
         int chosen=0;
         for(int arm=0;arm<3;arm++){
-            double mean=(double)wins[arm]/counts[arm];
+            double mean=usePhaseHvBandit
+                    ? banditHvCredit[phase][arm]/counts[arm]
+                    : (double)wins[arm]/counts[arm];
             double ucb=mean+0.60*Math.sqrt(2.0*log/counts[arm]);
             if(ucb>best){best=ucb;chosen=arm;}
         }
