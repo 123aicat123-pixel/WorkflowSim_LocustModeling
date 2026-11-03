@@ -1,0 +1,42 @@
+name: v17 Read-only Family-Cluster Uncertainty
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v17-family-uncertainty.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41625790444
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: v17-report-41625790444
+          path: original/pilot
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41626382711
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: v17-confirm-report-41626382711
+          path: original/confirm
+      - name: Compute exact sign, family-cluster resample and leave-one-family-out
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v17_family_uncertainty.py
+          python3 scripts/fla_v17_family_uncertainty.py original reports | tee reports/analysis.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/v17_family_uncertainty.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-family-uncertainty-${{ github.run_id }}
+          path: reports
+          retention-days: 90
