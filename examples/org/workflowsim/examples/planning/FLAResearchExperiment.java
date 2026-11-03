@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -237,6 +238,7 @@ public final class FLAResearchExperiment {
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
         if (BUDGET_REPLAY_K > 0) {
+            saveVisitedFingerprints(wf,seed,prefix,runs);
             Path protocol = Paths.get(prefix + "_budget_protocol.txt");
             Files.write(protocol, Arrays.asList(
                     "PROSPECTIVE_REPLAY_BUDGET_K=" + BUDGET_REPLAY_K,
@@ -428,6 +430,33 @@ public final class FLAResearchExperiment {
         return r;
     }
 
+
+    /** Stable SHA-256 commitment to the complete ordered, DISTINCT planner-evaluated pool.
+     *  Uses canonical task:VM mapping and exact double bits, not displayed rounded CSV numbers.
+     *  Enables fairness auditors to prove that only the replay selector changed.
+     */
+    private static void saveVisitedFingerprints(String wf,long seed,Path prefix,List<Run> runs)
+            throws Exception {
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_visited_fingerprints.csv"),StandardCharsets.UTF_8)) {
+            w.write("workflow,algorithm,seed,distinct_visited,history_sha256\n");
+            for(Run run:runs) {
+                if(run.allVisited.isEmpty() || run.allVisited.size()!=run.distinctObservedAssignments)
+                    throw new IllegalStateException("Incomplete ordered distinct visited history: "+run.algorithm);
+                MessageDigest digest=MessageDigest.getInstance("SHA-256");
+                for(Candidate c:run.allVisited) {
+                    String entry=canonicalMappingKey(c)+"|"+
+                            Long.toHexString(Double.doubleToLongBits(c.planned[0]))+"|"+
+                            Long.toHexString(Double.doubleToLongBits(c.planned[1]))+"\n";
+                    digest.update(entry.getBytes(StandardCharsets.UTF_8));
+                }
+                StringBuilder hex=new StringBuilder();
+                for(byte value:digest.digest())
+                    hex.append(String.format(Locale.ROOT,"%02x",value&255));
+                w.write(wf+","+run.algorithm+","+seed+","+run.allVisited.size()+","+hex+"\n");
+            }
+        }
+    }
 
     /** Keep every DISTINCT genotype to quantify planned-front screening bias. */
     private static void saveFirstTwo(Run run,UnifiedCandidateRecorder.Capture cap) {
