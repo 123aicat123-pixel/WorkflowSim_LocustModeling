@@ -1,0 +1,36 @@
+name: Read-only v14 original K16 four-arm simulator report
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v14-readonly-report.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41616676427
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: v14-search-*-41616676427
+          path: original
+      - name: Verify original source and the complete 12-case actual WorkflowSim observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v14_search_report.py
+          python3 scripts/fla_v14_search_report.py original reports | tee reports/analysis.log
+          git rev-parse HEAD > reports/analysis_source_sha.txt
+          cat reports/v14_search_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v14-readonly-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
