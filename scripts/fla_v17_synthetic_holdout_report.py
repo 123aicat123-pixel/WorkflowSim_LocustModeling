@@ -74,7 +74,7 @@ def main(root,out):
  with (out/"v17_synthetic_cases.csv").open("w",newline="") as f:
   w=csv.DictWriter(f,fieldnames=list(cases[0]));w.writeheader();w.writerows(cases)
  lines=["# Frozen v17 DO-only random on newly generated wide and deep synthetic DAG topologies","",
- "Two newly generated synthetic DAG topologies each with 60 jobs, two VM regimes, and three frozen NEW seeds: 12 matched blocks and four solver arms. These are not real scientific application families. Each arm exactly 3030 planner target evaluations and K16 actual WorkflowSim replays. DO and late each 1036 neighbor probes and 1964 normal FLA offspring. Common PLANNED-only reference within each workflow/VM over all four arms and two seeds; 1.5x+1 primary, 3x+1 sensitivity. If any actual point violates it, fail, do not refit.","",
+ "Two newly generated synthetic DAG topologies each with 60 jobs, two VM regimes, and three frozen NEW seeds: 12 matched blocks and four solver arms. These are not real scientific application families. Each arm exactly 3030 planner target evaluations and K16 actual WorkflowSim replays. DO and late each 1036 neighbor probes and 1964 normal FLA offspring. Common PLANNED-only reference within each workflow/VM over all four arms and three frozen seeds; 1.5x+1 primary, 3x+1 sensitivity. If any actual point violates it, fail, do not refit.","",
  "| Workflow | VM | DO vs late (3-seed mean) | DO vs v12 | DO vs NSGA-II | DO wins late/3 |",
  "|---|---|---:|---:|---:|---:|"]
  for dag in DAGS:
