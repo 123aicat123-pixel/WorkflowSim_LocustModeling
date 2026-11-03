@@ -1,0 +1,40 @@
+name: Read-only FLA v18 Same-Reference Actual HV Analysis
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v18-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all frozen original true simulator K16 comparison blocks
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41674106990
+          github-token: ${{ github.token }}
+          pattern: fla-v18-*-41674106990
+          path: original
+      - name: Independent true-HV with one 3-arm reference per DAG/seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v18_disagreement_hv_audit.py
+          python3 scripts/fla_v18_disagreement_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-sha.txt
+          echo 'Original true FLA/NSGA-II simulator run 41674106990' > reports/original-run.txt
+          cat reports/v18_true_hv_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v18-disagreement-true-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
