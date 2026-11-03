@@ -1,0 +1,122 @@
+name: Diagnose fair seeded FLA versus NSGA-II Pareto front geometry
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-fair-front-geometry.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  audit:
+    name: Fair seeded Pareto geometry over 25 matched cases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable five-workflow cost-seeded fairness evidence
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41562247912
+          github-token: ${{ github.token }}
+          pattern: fairfull-*
+          path: inputs
+          merge-multiple: false
+      - name: Evaluate extreme coverage and cross-front dominance on actual simulator outcomes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,collections,statistics,math
+          paths=list(pathlib.Path('inputs').rglob('*_replays.csv'))
+          summaries=list(pathlib.Path('inputs').rglob('*_summary.csv'))
+          assert len(paths)==len(summaries)==25,(len(paths),len(summaries))
+          names=['DAG-Pareto-FLA[v7-costseed]','NSGA-II[costseed]']
+          workflows=['CyberShake_100','Epigenomics_100','Inspiral_100','Montage_100','Sipht_100']
+          pts=collections.defaultdict(list)
+          summary={}
+          for p in paths:
+              with p.open(newline='') as f:rows=list(csv.DictReader(f))
+              assert rows
+              for r in rows:
+                  key=(r['workflow'],int(r['seed']),r['algorithm'])
+                  assert key[0] in workflows and key[1] in range(1,6) and key[2] in names
+                  xy=(float(r['sim_makespan']),float(r['sim_cost']))
+                  assert all(math.isfinite(v) and v>0 for v in xy)
+                  pts[key].append(xy)
+          for p in summaries:
+              with p.open(newline='') as f:rows=list(csv.DictReader(f))
+              assert len(rows)==2
+              for r in rows:
+                  key=(r['workflow'],int(r['seed']),r['algorithm'])
+                  assert key not in summary,key
+                  summary[key]=r
+                  assert int(r['captured_evaluations'])==3030
+                  assert int(r['replayed'])==len(pts[key])
+          assert len(summary)==len(pts)==50
+          def dominates(a,b):
+              return a[0]<=b[0] and a[1]<=b[1] and a!=b
+          def front(xs):
+              u=sorted(set(xs))
+              return [x for x in u if not any(dominates(y,x) for y in u)]
+          raw=[]
+          for w in workflows:
+              for seed in range(1,6):
+                  f,n=[front(pts[(w,seed,a)]) for a in names]
+                  assert f and n
+                  def diff(a,b):return 100*(a/max(1e-12,b)-1)
+                  f_m=min(x[0] for x in f);n_m=min(x[0] for x in n)
+                  f_c=min(x[1] for x in f);n_c=min(x[1] for x in n)
+                  f_cross=sum(any(dominates(x,y) for x in n) for y in f)/len(f)
+                  n_cross=sum(any(dominates(x,y) for x in f) for y in n)/len(n)
+                  raw.append(dict(workflow=w,seed=seed,fla_nd_size=len(f),nsga_nd_size=len(n),
+                                  fla_replayed=len(pts[(w,seed,names[0])]),
+                                  nsga_replayed=len(pts[(w,seed,names[1])]),
+                                  fla_min_makespan=f_m,nsga_min_makespan=n_m,
+                                  fla_min_cost=f_c,nsga_min_cost=n_c,
+                                  fla_min_makespan_minus_nsga_pct=diff(f_m,n_m),
+                                  fla_min_cost_minus_nsga_pct=diff(f_c,n_c),
+                                  frac_fla_points_dominated_by_nsga=f_cross,
+                                  frac_nsga_points_dominated_by_fla=n_cross,
+                                  fla_distinct_pct=100*int(summary[(w,seed,names[0])]['distinct_observed'])/3030,
+                                  nsga_distinct_pct=100*int(summary[(w,seed,names[1])]['distinct_observed'])/3030))
+          assert len(raw)==25
+          report=['# Pareto front geometry with identical low-cost seeds',
+                  '',
+                  'All numbers derive from actual WorkflowSim replays archived in immutable 25-case run 41562247912 (same initial two task-to-VM maps and 3030 objective evaluations).',
+                  'Only planned-nondominated candidates were simulator-replayed, so these are REPLAYED subset fronts, not true exhaustive fronts over all visited genotypes.',
+                  'All objectives are minimization; negative relative min makespan/cost is better for FLA, positive is worse.',
+                  'Cross-front domination counts a solution dominated by at least one point in the opposite solver front; these counts are not HV and do not require any common reference point.',
+                  '',
+                  '| Workflow | FLA vs NSGA mean min makespan % | FLA vs NSGA mean min cost % | Mean FLA simulator ND size | Mean NSGA ND size | FLA points dominated by NSGA % | NSGA points dominated by FLA % |',
+                  '|---|---:|---:|---:|---:|---:|---:|']
+          def mean(g,k):return statistics.mean(float(x[k]) for x in g)
+          for w in workflows:
+              g=[x for x in raw if x['workflow']==w]
+              report.append(f'| {w} | {mean(g,"fla_min_makespan_minus_nsga_pct"):+.3f}% | {mean(g,"fla_min_cost_minus_nsga_pct"):+.3f}% | {mean(g,"fla_nd_size"):.2f} | {mean(g,"nsga_nd_size"):.2f} | {100*mean(g,"frac_fla_points_dominated_by_nsga"):.2f}% | {100*mean(g,"frac_nsga_points_dominated_by_fla"):.2f}% |')
+          report+=['','## Unweighted across all 25 matched runs','',
+                   f'- Min makespan difference FLA vs seeded NSGA: {mean(raw,"fla_min_makespan_minus_nsga_pct"):+.3f}%',
+                   f'- Min cost difference FLA vs seeded NSGA: {mean(raw,"fla_min_cost_minus_nsga_pct"):+.3f}%',
+                   f'- Mean simulated ND size FLA: {mean(raw,"fla_nd_size"):.2f}, seeded NSGA-II: {mean(raw,"nsga_nd_size"):.2f}',
+                   f'- Mean unique genotype rate FLA: {mean(raw,"fla_distinct_pct"):.2f}%, seeded NSGA-II: {mean(raw,"nsga_distinct_pct"):.2f}%',
+                   f'- FLA points dominated by seeded NSGA: {100*mean(raw,"frac_fla_points_dominated_by_nsga"):.2f}%',
+                   f'- Seeded NSGA points dominated by FLA: {100*mean(raw,"frac_nsga_points_dominated_by_fla"):.2f}%',
+                   '',
+                   'These descriptive statistics help identify WHY simulator HV may differ. They do not isolate a causal search mechanism and should not be used as a surrogate for a new independent, pre-registered test.']
+          with pathlib.Path('reports/fair_front_geometry_raw.csv').open('w',newline='') as f:
+              wr=csv.DictWriter(f,fieldnames=list(raw[0]));wr.writeheader();wr.writerows(raw)
+          pathlib.Path('reports/fair_front_geometry.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/fair_front_geometry.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fair-front-geometry-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
