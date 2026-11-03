@@ -52,6 +52,20 @@ Both CyberShake joins (`ID00000` and `ID00001`) have 22 listed parents but none 
 
 Important: `Sipht_60.xml` declares **58 jobs**, not 60. Benchmark labels should report actual DAX job count, and never silently assume the filename equals task count.
 
+## Independent source-pinned retrospective objective and dominance diagnosis
+
+A second [read-only GitHub Actions run 41613577056](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41613577056) independently downloaded **all original 18 job artifacts** from experiment 41612325067, asserted the original `40c08728eae0e46e4f678781a1689ea6b4eef62f` source SHA in each, recomputed 16-replay per-solver nondominated fronts and objective extremes, and ran **zero new optimizer evaluations / simulator replays**. Artifact `v13-readonly-diagnostic-41613577056`, ID `13219563751`, preserves all case CSVs and report.
+
+Across all 18 paired case seeds:
+
+- v13 actual minimum replayed makespan averaged **+6.888133%** relative to v12; v13 achieved a strictly shorter minimum in just **5/18**.
+- Actual minimum replayed rental cost averaged **0.000000%** change relative to v12 (values equal to printed resolution), so the degradation is concentrated in makespan quality rather than cost extreme.
+- Of each case's v13 selected K16 non-dominated front, an average **27.3710%** of points were strictly dominated by at least one v12 selected non-dominated point. This is **cross-front partial order** within selected K16 candidates, not an oracle over every search history.
+- Montage_50 staggered showed **+20.5820% mean minimum makespan**, despite a near-complete operator edit activation (`2826/2894` attempts changed genes). That is strong descriptive evidence that aggressive local co-location can harm global temporal allocation, **not proof of the precise causal mechanism**.
+- Mean reported total-runtime change v13 vs v12 was **−14.2866%**, but GitHub Actions wall-clock/JIT variability makes it inappropriate to claim an established compute-speed improvement from these relative values. Algorithm runtime and solution quality require separate controlled measurements.
+
+This retrospective diagnosis uses already exposed cases. None of its measurements can serve as new untouched holdout validation for a v14 adjusted after observing this failure.
+
 ## Consequences
 
 1. **Reject v13 for production/default selection.** Do not silently set v13 as an improvement over v12. Its positive cases are insufficient given the prespecified negative mean and large regressions.
