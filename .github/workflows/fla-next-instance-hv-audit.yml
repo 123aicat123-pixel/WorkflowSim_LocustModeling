@@ -1,0 +1,40 @@
+name: Read-only Prospective Dual-Worst True-HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-next-instance-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  same-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all eight completed true simulator and original genotype outcomes
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41673209577
+          github-token: ${{ github.token }}
+          pattern: fla-next-*-41673209577
+          path: original
+      - name: Independently recalculate paired HV with one true reference per DAG/seed
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_dual_worst_next_instance_hv.py
+          python3 scripts/fla_dual_worst_next_instance_hv.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          echo 'Immutable 8-block true simulator source: 41673209577' > reports/original-source.txt
+          cat reports/paired_true_hv_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all new-instance matched reference results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-next-instance-common-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
