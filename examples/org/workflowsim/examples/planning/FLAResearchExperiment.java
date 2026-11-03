@@ -116,6 +116,18 @@ public final class FLAResearchExperiment {
                 Run seededNsga=runNsga(dax,seed,pop,gens,true);
                 assertCostSeedIdentity(seededFla,seededNsga);
                 runs.add(seededNsga);
+            } else if ("v12-fair-pair".equals(args[5])) {
+                // Three-arm common-reference validation. The two seeded DAG
+                // variants and NSGA-II share EXACTLY the same deterministic
+                // low-cost first two assignments and evaluation budgets.
+                Run v7=runDag(dax,seed,pop,gens,"v7-costseed");
+                Run v12=runDag(dax,seed,pop,gens,"v12-hvbandit");
+                Run nsga=runNsga(dax,seed,pop,gens,true);
+                assertCostSeedIdentity(v7,nsga);
+                assertCostSeedIdentity(v12,nsga);
+                runs.add(v7);
+                runs.add(v12);
+                runs.add(nsga);
             } else if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, false));
             } else if ("nsga-costseed".equals(args[5])) {
