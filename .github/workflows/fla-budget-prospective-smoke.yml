@@ -1,4 +1,5 @@
 name: Prospective K-limited FLA WorkflowSim replay budget smoke
+# Regression after Java-Python deterministic tie parity fix.
 on:
   push:
     branches: [fla-baseline]
