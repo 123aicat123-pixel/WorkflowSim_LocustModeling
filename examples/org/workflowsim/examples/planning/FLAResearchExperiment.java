@@ -66,6 +66,7 @@ public final class FLAResearchExperiment {
         int distinctObservedAssignments;
         List<double[]> simulatorFront;
         final List<Candidate> allVisited = new ArrayList<>();
+        final List<Map<Integer,Integer>> firstTwoEvaluated = new ArrayList<>();
         final List<Candidate> audited = new ArrayList<>();
         final List<String> auditStrata = new ArrayList<>();
         int dominatedPool;
@@ -99,8 +100,11 @@ public final class FLAResearchExperiment {
             if ("fair-pair".equals(args[5])) {
                 // Predeclared fairness mode: identical low-cost initialization,
                 // identical search budgets and simulator replay protocol.
-                runs.add(runDag(dax, seed, pop, gens, "v7-costseed"));
-                runs.add(runNsga(dax, seed, pop, gens, true));
+                Run fla=runDag(dax, seed, pop, gens, "v7-costseed");
+                Run nsga=runNsga(dax, seed, pop, gens, true);
+                assertCostSeedIdentity(fla,nsga);
+                runs.add(fla);
+                runs.add(nsga);
             } else if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, false));
             } else if ("nsga-costseed".equals(args[5])) {
@@ -174,6 +178,18 @@ public final class FLAResearchExperiment {
         }
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
+    }
+
+    private static void assertCostSeedIdentity(Run fla,Run nsga) {
+        if(fla.firstTwoEvaluated.size()!=2 || nsga.firstTwoEvaluated.size()!=2)
+            throw new IllegalStateException("Missing initial deterministic cost proposals");
+        for(int i=0;i<2;i++) {
+            if(!fla.firstTwoEvaluated.get(i).equals(nsga.firstTwoEvaluated.get(i)))
+                throw new IllegalStateException(
+                    "Cost-seed fairness violation for proposal "+i+": FLA="+
+                    fla.firstTwoEvaluated.get(i)+" NSGA-II="+nsga.firstTwoEvaluated.get(i));
+        }
+        System.out.println("PASS identical first TWO task->VM deterministic cost seeds in FLA v7 and NSGA-II");
     }
 
     private static Run runScalar(String dax, long seed, int pop, int gens) {
@@ -271,6 +287,7 @@ public final class FLAResearchExperiment {
         r.evals=capture.evaluationCount();r.searchMs=m.searchWallClockMillis;
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
+        saveFirstTwo(r,capture);
         append(r,capture.frontPoints(),capture.frontAssignments());
         appendAuditHistory(r,capture);
         return r;
@@ -292,7 +309,7 @@ public final class FLAResearchExperiment {
         Run r=new Run(costSeeded ? "NSGA-II[costseed]" : "NSGA-II");r.actualGenerations=String.valueOf(gens);r.evals=capture.evaluationCount();
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
-        r.searchMs=m.searchWallClockMillis;append(r,capture.frontPoints(),capture.frontAssignments());
+        r.searchMs=m.searchWallClockMillis;saveFirstTwo(r,capture);append(r,capture.frontPoints(),capture.frontAssignments());
         appendAuditHistory(r,capture);
         return r;
     }
@@ -323,6 +340,11 @@ public final class FLAResearchExperiment {
 
 
     /** Keep every DISTINCT genotype to quantify planned-front screening bias. */
+    private static void saveFirstTwo(Run run,UnifiedCandidateRecorder.Capture cap) {
+        int n=Math.min(2,cap.events().size());
+        for(int i=0;i<n;i++)run.firstTwoEvaluated.add(cap.events().get(i).assignment);
+    }
+
     private static void appendAuditHistory(Run run,UnifiedCandidateRecorder.Capture cap) {
         if (SCREENING_AUDIT_N == 0) return;
         for (UnifiedCandidateRecorder.Event e : cap.uniqueEvents()) {
