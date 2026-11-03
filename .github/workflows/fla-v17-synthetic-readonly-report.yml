@@ -1,0 +1,36 @@
+name: v17 Synthetic K16 Read-only Three-Seed Report Correction
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v17-synthetic-readonly-report.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41631739331
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: v17-SynthNew*-41631739331
+          path: original
+      - name: Independently re-score original K16 records with correct three-seed report header
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v17_synthetic_holdout_report.py
+          python3 scripts/fla_v17_synthetic_holdout_report.py original reports | tee reports/analysis.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          cat reports/v17_synthetic_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-synthetic-readonly-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
