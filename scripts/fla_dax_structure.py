@@ -41,6 +41,7 @@ def inspect_dax(path):
     durations = {}
     producers, consumers = {}, {}
     bad_links = 0
+    invalid_file_sizes = 0
     for node in nodes:
         identifier = node.get("id")
         if not identifier or identifier in durations:
@@ -51,7 +52,15 @@ def inspect_dax(path):
             name, link = f.get("file"), f.get("link")
             if not name:
                 raise ValueError("Missing filename in job " + identifier)
-            size = nonnegative_number(f.get("size"), "file bytes")
+            # Some Pegasus DAX sets (e.g. Epigenomics_997) contain
+            # negative file sizes. They are invalid bytes, NOT negative
+            # communication. Preserve DAG topology; exclude invalid sizes
+            # explicitly from any logical-byte aggregation.
+            try:
+                size = nonnegative_number(f.get("size"), "file bytes")
+            except ValueError:
+                size = None
+                invalid_file_sizes += 1
             if link == "input":
                 if name in inputs and inputs[name] != size:
                     raise ValueError("Conflicting input sizes")
@@ -117,13 +126,19 @@ def inspect_dax(path):
     matched_edges = 0
     logical_bytes = 0.
     mismatched_bytes = 0
+    invalid_edge_file_sizes = 0
     for a, b in edge_set:
         common = producers[a].keys() & consumers[b].keys()
         if common:
             matched_edges += 1
             for file in common:
-                logical_bytes += producers[a][file]
-                if producers[a][file] != consumers[b][file]:
+                producer_size=producers[a][file]
+                consumer_size=consumers[b][file]
+                if producer_size is None or consumer_size is None:
+                    invalid_edge_file_sizes += 1
+                    continue
+                logical_bytes += producer_size
+                if producer_size != consumer_size:
                     mismatched_bytes += 1
 
     declared_jobs = root.get("jobCount")
@@ -151,6 +166,8 @@ def inspect_dax(path):
         edges_with_common_file=matched_edges,
         edges_without_common_file=len(edge_set)-matched_edges,
         declared_intertask_file_bytes=logical_bytes,
+        invalid_dax_file_size_references=invalid_file_sizes,
+        skipped_invalid_edge_file_size_pairs=invalid_edge_file_sizes,
         parent_child_file_size_disagreements=mismatched_bytes,
         input_file_references=sum(map(len, consumers.values())),
         output_file_references=sum(map(len, producers.values()))
