@@ -1,5 +1,5 @@
 name: Cross-language precision parity for prospective FLA replay selector
-# Re-run on selector semantic fix; also serves as a standalone regression entry point.
+# Exact prospective Python-Java parity now checks BOTH Pareto-cover and scalar-sweep selectors.
 on:
   push:
     branches: [fla-baseline]
