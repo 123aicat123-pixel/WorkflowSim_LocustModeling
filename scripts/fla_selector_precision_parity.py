@@ -46,16 +46,16 @@ def verify(fixture, output):
                 oracle.Planned("1:" + row["id"], float(row["m"]), float(row["c"])))
     observed = {}
     for line in output.read_text().splitlines():
-        if not (line.startswith("PARITY|") or line.startswith("PARITYSWEEP|")):
+        if not (line.startswith("PARITY|") or line.startswith("PARITYSWEEP|") or line.startswith("PARITYBAND3|")):
             continue
         family, case, count, ordered = line.split("|", 3)
-        policy = {"PARITY":"pareto-cover","PARITYSWEEP":"scalar-sweep"}[family]
+        policy = {"PARITY":"pareto-cover","PARITYSWEEP":"scalar-sweep","PARITYBAND3":"extreme-band3"}[family]
         key = (case, int(count), policy)
         assert key not in observed, key
         observed[key] = ordered.split(",")
     expected_keys = {(case, k, policy) for case in bycase
                      for k in (8, 16, 24, 32)
-                     for policy in ("pareto-cover", "scalar-sweep")}
+                     for policy in ("pareto-cover", "scalar-sweep", "extreme-band3")}
     assert set(observed) == expected_keys, (set(observed), expected_keys)
     diffs = []
     for (case, k, policy), actual in sorted(observed.items()):
