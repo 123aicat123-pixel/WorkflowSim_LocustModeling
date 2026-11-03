@@ -1,0 +1,41 @@
+name: Read-only Actual WorkflowSim Task Event-Chain Mechanism
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-fixed-event-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  event-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original fixed-assignment simulator event logs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41664213940
+          github-token: ${{ github.token }}
+          pattern: fla-event-chain-*-41664213940
+          path: original
+      - name: Audit same-genotype event stages with original Task IDs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_fixed_event_chain_audit.py
+          python3 scripts/fla_fixed_event_chain_audit.py original config/dax reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          printf 'Original real 16 simulator event replays: 41664213940\n' > reports/original-run-id.txt
+          cat reports/fixed_event_chain_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve complete objective/trace cross-check
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-fixed-event-mechanism-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
