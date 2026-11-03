@@ -1,0 +1,37 @@
+name: Recover five-family causal K16 frozen-reference report from real simulator jobs
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-causal-online100-recover.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  aggregate-original-ten:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41595600890
+          github-token: ${{ github.token }}
+          pattern: causal100-k16-*-41595600890
+          path: original-data
+      - name: Independently score all thirty algorithm cases from original source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_causal_online_feedback_100task.py original-data reports | tee reports/aggregate.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          printf 'Original 10/10 PASS WorkflowSim simulation jobs in Actions 41595600890\n' > reports/original-execution.txt
+          cat reports/causal_online_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: causal100-recovered-report-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
