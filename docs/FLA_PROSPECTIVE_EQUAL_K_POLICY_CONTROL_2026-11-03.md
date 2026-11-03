@@ -6,7 +6,7 @@
 
 - [GitHub Actions run 41584672254](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41584672254), source commit `63346dd4193457e717c0483c36a22dc22e974a79`.
 - Full report and per-arm raw scores: Actions artifact `equalpolicy-report-41584672254`, ID `13207726897`. Contains `prospective_policy_report.md`, `prospective_policy_scores.csv`, `source-sha.txt` and audit log. Six per-case artifacts retain the actual Java/WorkflowSim replay CSV and all logged assertions.
-- Reproduction workflow in branch: `.github/workflows/fla-prospective-equalpolicy.yml` (use exact workflow listing to locate if renamed in future).
+- Reproduction workflow in branch: `.github/workflows/fla-prospective-policy-control.yml`.
 - A second, separately authored six-case smoke workflow [run 41584797207](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41584797207) has also completed all six case-level jobs successfully under the same general experiment design. The primary quantitative values below are **from 41584672254**, not pooled across potentially differing source commits.
 
 ## Experimental design
