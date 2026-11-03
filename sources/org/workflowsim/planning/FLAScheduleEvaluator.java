@@ -80,6 +80,9 @@ public final class FLAScheduleEvaluator {
     private long objectiveEvaluations;
     private final StageInAwareScheduleEvaluator stageInAwareEvaluator;
     private StageInAwareScheduleEvaluator.Result lastStageInResult;
+    /** Explicit experimental alternative, OFF by default; same genotype/VM encoding. */
+    private final ReadyQueueScheduleEvaluator readyQueueEvaluator;
+    private ReadyQueueScheduleEvaluator.Result lastReadyQueueResult;
     /** Optional model parity switch: -Dworkflowsim.planningStageInAware=true */
 
     /** Defaults to validated earliest insertion and no extra PE rejection.
@@ -128,6 +131,8 @@ public final class FLAScheduleEvaluator {
         prepareDecoder();
         stageInAwareEvaluator = Boolean.getBoolean("workflowsim.planningStageInAware")
                 ? new StageInAwareScheduleEvaluator(taskOrder,vmList) : null;
+        readyQueueEvaluator=Boolean.getBoolean("dagfla.useReadyQueueObjective")
+                ?new ReadyQueueScheduleEvaluator(taskOrder,vmList):null;
     }
 
     public List<Task> getTaskOrder() { return taskOrder; }
@@ -330,6 +335,12 @@ public final class FLAScheduleEvaluator {
     /** Exactly ONE objective evaluation and one detached, mode-consistent timeline. */
     public ScheduleTrace evaluateWithTrace(int[] g) {
         double[] mc=decode(g);
+        if(readyQueueEvaluator!=null) {
+            if(lastReadyQueueResult==null)
+                throw new IllegalStateException("Missing ready-queue timeline");
+            return new ScheduleTrace(mc[0],mc[1],
+                    lastReadyQueueResult.starts,lastReadyQueueResult.finishes,g);
+        }
         if(stageInAwareEvaluator!=null) {
             if(lastStageInResult==null)throw new IllegalStateException("Missing stage-in-aware timeline");
             return new ScheduleTrace(mc[0],mc[1],
@@ -362,7 +373,13 @@ public final class FLAScheduleEvaluator {
             cost+=d*vmPrice[v];
             makespan=Math.max(makespan,fin);
         }
-        if(stageInAwareEvaluator!=null) {
+        if(readyQueueEvaluator!=null) {
+            ReadyQueueScheduleEvaluator.Result corrected=
+                    readyQueueEvaluator.evaluate(toAssignment(g));
+            lastReadyQueueResult=corrected;
+            makespan=corrected.makespan;
+            cost=corrected.cost;
+        } else if(stageInAwareEvaluator!=null) {
             StageInAwareScheduleEvaluator.Result corrected =
                     stageInAwareEvaluator.evaluate(toAssignment(g));
             lastStageInResult=corrected;
