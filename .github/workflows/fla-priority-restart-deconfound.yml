@@ -1,0 +1,118 @@
+name: FLA Fixed Priority versus Restart Deconfounding True Simulator
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-restart-deconfound.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  solver-pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        workflow: [Inspiral_50, Epigenomics_46]
+        seed: [821, 822]
+        variant: [old_full, ready_full, shortest_full, upward_full, split_fifo0, split_fifo1, split_fifo2, split_priority_fifo, split_priority_shortest, split_priority_upward]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean Java build, timing oracle and runtime-priority unit checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueuePriorityForecastTest > reports/priority-forecast-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.scheduling.FLAFixedVmReadyPriorityTest > reports/priority-runtime-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-original-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/stagein-unit.log
+      - name: Run frozen cost-seeded solver pair and replay real WorkflowSim without leakage
+        shell: bash
+        run: |
+          set -euo pipefail
+          variant='${{ matrix.variant }}'
+          base_seed='${{ matrix.seed }}'
+          actual_seed="$base_seed"
+          pop=30
+          replay_k=16
+          ready=false
+          priority_aware=false
+          runtime=fifo
+          case "$variant" in
+            old_full) ;;
+            ready_full) ready=true ;;
+            shortest_full) ready=true; priority_aware=true; runtime=shortest ;;
+            upward_full) ready=true; priority_aware=true; runtime=upward ;;
+            split_fifo0|split_priority_fifo)
+              pop=10; replay_k=6; ready=true; priority_aware=true ;;
+            split_fifo1)
+              pop=10; replay_k=5; ready=true; priority_aware=true; actual_seed=$((base_seed+10000)) ;;
+            split_fifo2)
+              pop=10; replay_k=5; ready=true; priority_aware=true; actual_seed=$((base_seed+20000)) ;;
+            split_priority_shortest)
+              pop=10; replay_k=5; ready=true; priority_aware=true
+              runtime=shortest; actual_seed=$((base_seed+10000)) ;;
+            split_priority_upward)
+              pop=10; replay_k=5; ready=true; priority_aware=true
+              runtime=upward; actual_seed=$((base_seed+20000)) ;;
+            *) echo "Unexpected preregistered variant $variant" >&2; exit 1 ;;
+          esac
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective="$ready" \
+            -Ddagfla.priorityAwareSearch="$priority_aware" \
+            -Ddagfla.fixedVmReadyPriority="$runtime" \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.budgetReplayK="$replay_k" \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=staggered \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' "$actual_seed" "$pop" 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -110 reports/experiment.log
+              exit 1
+            }
+          python3 - <<PY
+          import csv,math
+          def read(path):
+              with open(path,newline="") as f:return list(csv.DictReader(f))
+          summary=read('reports/research_summary.csv')
+          replay=read('reports/research_replays.csv')
+          pop=int("$pop");k=int("$replay_k");expected=pop*101
+          seed=int("$actual_seed")
+          wf='${{ matrix.workflow }}'
+          assert len(summary)==2 and len(replay)==2*k,(len(summary),len(replay))
+          arms={'DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert {s['algorithm'] for s in summary}==arms
+          for s in summary:
+              assert s['workflow']==wf and int(s['seed'])==seed,s
+              assert (int(s['population']),int(s['generations']),int(s['evaluations']),
+                      int(s['captured_evaluations']),int(s['replayed'])) == (pop,100,expected,expected,k),s
+              points=sorted((r for r in replay if r['algorithm']==s['algorithm']),key=lambda r:int(r['candidate_index']))
+              assert len(points)==k and [int(p['candidate_index']) for p in points]==list(range(1,k+1))
+              assert len({p['mapping'] for p in points})==k
+              for p in points:
+                  assert p['workflow']==wf and int(p['seed'])==seed
+                  for col in ('sim_makespan','sim_cost','planned_makespan','planned_cost'):
+                      assert math.isfinite(float(p[col])) and float(p[col])>0,(col,p)
+              for key in ('search_ms','selection_ms','replay_ms'):
+                  assert math.isfinite(float(s[key])) and float(s[key])>=0
+          print("PASS",wf,seed,"$variant", "both solvers",
+                expected,"genotype evaluations and K=",k,"true simulator replays")
+          PY
+          printf 'DAG=%s base_seed=%s source_seed=%s variant=%s runtime_priority=%s pop=%s K=%s profile=staggered\n' \
+            '${{ matrix.workflow }}' "$base_seed" "$actual_seed" "$variant" "$runtime" "$pop" "$replay_k" > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_PRIORITY_RESTART_DECONFOUND_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+      - name: Preserve both solvers, original evaluated points and unfiltered true simulator results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-restart-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ matrix.variant }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
