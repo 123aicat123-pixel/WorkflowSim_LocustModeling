@@ -41,6 +41,8 @@ public final class FLAResearchExperiment {
     private FLAResearchExperiment() {}
     /** Read-only optional diagnostic, disabled by default. */
     private static final int SCREENING_AUDIT_N = Integer.getInteger("dagfla.screeningAuditPerAlgorithm", 0);
+    /** Prospective, actual WorkflowSim replay budget; zero preserves historical replay behavior. */
+    private static final int BUDGET_REPLAY_K = Integer.getInteger("dagfla.budgetReplayK", 0);
     /** Include equal planned objectives from distinct assignments in exhaustive audits. */
     private static final boolean SCREENING_INCLUDE_TIES =
             Boolean.getBoolean("dagfla.screeningAuditIncludeTies");
@@ -65,6 +67,7 @@ public final class FLAResearchExperiment {
         long searchMs;
         String actualGenerations;
         int sourceFrontSize;
+        int plannedNdCount;
         int capturedEvaluations;
         int distinctObservedAssignments;
         List<double[]> simulatorFront;
@@ -93,6 +96,10 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
+        if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
+            throw new IllegalArgumentException("invalid actual replay budget");
+        if (BUDGET_REPLAY_K > 0 && SCREENING_AUDIT_N > 0)
+            throw new IllegalArgumentException("Prospective K-limited replay cannot be combined with the extra-replay audit");
         if (SCREENING_ALL_VISITED && (!SCREENING_INCLUDE_TIES || SCREENING_AUDIT_N == 0))
             throw new IllegalArgumentException("all-visited replay requires positive sample cap and including ties");
         Path prefix = Paths.get(args[4]);
@@ -158,7 +165,12 @@ public final class FLAResearchExperiment {
                 throw new IllegalStateException(run.algorithm + " invalid budget/front: " + run.evals);
             }
             // Only unique planned-nondominated schedules are replayed, equally.
-            List<Candidate> front = plannedNondominated(run.candidates);
+            run.plannedNdCount = plannedNondominated(run.candidates).size();
+            List<Candidate> front = BUDGET_REPLAY_K > 0
+                    ? budgetedPlannedCoverage(run.allVisited, BUDGET_REPLAY_K)
+                    : plannedNondominated(run.candidates);
+            if (BUDGET_REPLAY_K > 0 && front.size() != BUDGET_REPLAY_K)
+                throw new IllegalStateException("Wrong prospective simulator replay call budget");
             run.candidates.clear(); run.candidates.addAll(front);
             System.out.printf(Locale.ROOT,
                     "REPLAY %s %s seed=%d evaluations=%d archive=%d uniqueND=%d%n",
@@ -207,6 +219,18 @@ public final class FLAResearchExperiment {
         }
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
+        if (BUDGET_REPLAY_K > 0) {
+            Path protocol = Paths.get(prefix + "_budget_protocol.txt");
+            Files.write(protocol, Arrays.asList(
+                    "PROSPECTIVE_REPLAY_BUDGET_K=" + BUDGET_REPLAY_K,
+                    "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
+                    "Pre-simulation selection: Pareto layers plus normalized greedy max-min objective coverage",
+                    "Selection never reads true simulator objective values; K is separate from optimizer evaluation counts",
+                    "Simulator HV reference in summary is shared across solver arms within this run only",
+                    "This is NOT the full visited simulator Pareto front and not a registered reference point",
+                    "The archive size column denotes source archive size; planned nondominated count is separate from replay count"
+                    ),StandardCharsets.UTF_8);
+        }
     }
 
     private static void assertCostSeedIdentity(Run fla,Run nsga) {
@@ -392,7 +416,7 @@ public final class FLAResearchExperiment {
     }
 
     private static void appendAuditHistory(Run run,UnifiedCandidateRecorder.Capture cap) {
-        if (SCREENING_AUDIT_N == 0) return;
+        if (SCREENING_AUDIT_N == 0 && BUDGET_REPLAY_K == 0) return;
         for (UnifiedCandidateRecorder.Event e : cap.uniqueEvents()) {
             run.allVisited.add(new Candidate(new double[]{e.makespan,e.cost},e.assignment));
         }
@@ -548,6 +572,81 @@ public final class FLAResearchExperiment {
         if(x.length!=2 || !Double.isFinite(x[0])||!Double.isFinite(x[1])||x[0]<=0||x[1]<0)
             throw new IllegalStateException("Invalid objectives " + Arrays.toString(x));
     }
+
+    /**
+     * Budgeted, prospective replay selection from PLANNED objective history only.
+     * Explicitly different from the default full planned-ND replay protocol.
+     * No simulator labels are used before the K chosen schedules are simulated.
+     * Pareto fronts are peeled in sorted makespan/cost order; distinct tied
+     * genotypes remain in the same layer, rather than being discarded.
+     */
+    private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
+        Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
+        for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
+        List<Candidate> remaining=new ArrayList<>(unique.values());
+        if(remaining.size()<budget)
+            throw new IllegalStateException("Insufficient unique visited schedules for K="+budget
+                    +": have "+remaining.size());
+        double mMin=Double.POSITIVE_INFINITY,cMin=Double.POSITIVE_INFINITY;
+        double mMax=Double.NEGATIVE_INFINITY,cMax=Double.NEGATIVE_INFINITY;
+        for(Candidate c:remaining) {
+            valid(c.planned);
+            mMin=Math.min(mMin,c.planned[0]);cMin=Math.min(cMin,c.planned[1]);
+            mMax=Math.max(mMax,c.planned[0]);cMax=Math.max(cMax,c.planned[1]);
+        }
+        final double loM=mMin,loC=cMin;
+        final double spanM=Math.max(1e-12,mMax-mMin);
+        final double spanC=Math.max(1e-12,cMax-cMin);
+        Comparator<Candidate> order=Comparator
+                .comparingDouble((Candidate c)->c.planned[0])
+                .thenComparingDouble(c->c.planned[1])
+                .thenComparing(c->c.assignment.toString());
+        List<Candidate> selected=new ArrayList<>();
+        while(selected.size()<budget && !remaining.isEmpty()) {
+            remaining.sort(order);
+            List<Candidate> layer=new ArrayList<>();
+            double lowCost=Double.POSITIVE_INFINITY,lastM=Double.NaN,lastC=Double.NaN;
+            for(Candidate c:remaining) {
+                boolean equalPoint=c.planned[0]==lastM&&c.planned[1]==lastC;
+                if(c.planned[1]<lowCost || equalPoint) {
+                    layer.add(c);
+                    lowCost=Math.min(lowCost,c.planned[1]);
+                    lastM=c.planned[0];lastC=c.planned[1];
+                }
+            }
+            if(layer.isEmpty())throw new IllegalStateException("Empty planned Pareto peel");
+            remaining.removeAll(layer);
+            while(!layer.isEmpty() && selected.size()<budget) {
+                Candidate best=null;
+                double bestSpacing=Double.NEGATIVE_INFINITY;
+                for(Candidate c:layer) {
+                    double spacing=Double.POSITIVE_INFINITY;
+                    if(selected.isEmpty()) {
+                        // First schedule is the minimum makespan extreme.
+                        spacing=0;
+                    } else {
+                        double u=(c.planned[0]-loM)/spanM,v=(c.planned[1]-loC)/spanC;
+                        for(Candidate s:selected) {
+                            double du=u-(s.planned[0]-loM)/spanM;
+                            double dv=v-(s.planned[1]-loC)/spanC;
+                            spacing=Math.min(spacing,du*du+dv*dv);
+                        }
+                    }
+                    if(best==null || spacing>bestSpacing+1e-15 ||
+                            (Math.abs(spacing-bestSpacing)<=1e-15 && order.compare(c,best)<0)) {
+                        best=c;bestSpacing=spacing;
+                    }
+                }
+                selected.add(best);
+                layer.remove(best);
+            }
+        }
+        if(selected.size()!=budget)throw new IllegalStateException("Did not cover K="+budget);
+        System.out.println("PASS prospective planned-only replay selection K="+budget
+                +" uniqueHistory="+unique.size());
+        return selected;
+    }
+
     private static List<Candidate> plannedNondominated(List<Candidate> raw) {
         Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
         for(Candidate x:raw)unique.putIfAbsent(x.assignment,x);
@@ -591,7 +690,7 @@ public final class FLAResearchExperiment {
             w.write("workflow,algorithm,seed,population,generations,budget_cap,evaluations,source_archive,distinct_planned_nondominated,replayed,sim_nondominated,captured_evaluations,distinct_observed,sim_hv,planned_hv,sim_ref_m,sim_ref_c,plan_ref_m,plan_ref_c,search_ms,actual_generations\n");
             for(Run r:runs) {
                 w.write(String.format(Locale.ROOT,"%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.10f,%.10f,%.10f,%.10f,%.10f,%.10f,%d,%s%n",
-                    wf,r.algorithm,seed,pop,gens,cap,r.evals,r.sourceFrontSize,r.candidates.size(),
+                    wf,r.algorithm,seed,pop,gens,cap,r.evals,r.sourceFrontSize,r.plannedNdCount,
                     r.candidates.size(),r.simulatorFront.size(),r.capturedEvaluations,
                     r.distinctObservedAssignments,r.simHv,r.planHv,
                     simRef[0],simRef[1],planRef[0],planRef[1],r.searchMs,r.actualGenerations));
