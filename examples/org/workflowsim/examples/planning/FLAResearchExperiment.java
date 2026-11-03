@@ -580,6 +580,16 @@ public final class FLAResearchExperiment {
      * Pareto fronts are peeled in sorted makespan/cost order; distinct tied
      * genotypes remain in the same layer, rather than being discarded.
      */
+    /** Same lexicographic task:vm mapping format as the independent Python selector. */
+    private static String canonicalMappingKey(Candidate c) {
+        StringBuilder key=new StringBuilder();
+        for(Map.Entry<Integer,Integer> entry:c.assignment.entrySet()) {
+            if(key.length()>0)key.append('|');
+            key.append(entry.getKey()).append(':').append(entry.getValue());
+        }
+        return key.toString();
+    }
+
     private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
         Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
         for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
@@ -597,10 +607,12 @@ public final class FLAResearchExperiment {
         final double loM=mMin,loC=cMin;
         final double spanM=Math.max(1e-12,mMax-mMin);
         final double spanC=Math.max(1e-12,cMax-cMin);
+        // Canonical mapping uses task:vm tokens, matching Python's persisted
+        // genotype encoding exactly. Map.toString() is NOT the same ordering.
         Comparator<Candidate> order=Comparator
                 .comparingDouble((Candidate c)->c.planned[0])
                 .thenComparingDouble(c->c.planned[1])
-                .thenComparing(c->c.assignment.toString());
+                .thenComparing(FLAResearchExperiment::canonicalMappingKey);
         List<Candidate> selected=new ArrayList<>();
         while(selected.size()<budget && !remaining.isEmpty()) {
             remaining.sort(order);
@@ -632,8 +644,8 @@ public final class FLAResearchExperiment {
                             spacing=Math.min(spacing,du*du+dv*dv);
                         }
                     }
-                    if(best==null || spacing>bestSpacing+1e-15 ||
-                            (Math.abs(spacing-bestSpacing)<=1e-15 && order.compare(c,best)<0)) {
+                    if(best==null || Double.compare(spacing,bestSpacing)>0 ||
+                            (Double.compare(spacing,bestSpacing)==0 && order.compare(c,best)<0)) {
                         best=c;bestSpacing=spacing;
                     }
                 }
