@@ -46,6 +46,9 @@ public final class FLAResearchExperiment {
     /** Same real-K simulator-call budget for all solvers; policy chooses which planned candidates. */
     private static final String BUDGET_REPLAY_POLICY =
             System.getProperty("dagfla.budgetReplayPolicy", "pareto-cover");
+    /** Independent RANDOM replay draw, fixed at zero for backward compatibility. */
+    private static final int BUDGET_REPLAY_REPLICATE =
+            Integer.getInteger("dagfla.budgetReplayReplicate", 0);
     /** Include equal planned objectives from distinct assignments in exhaustive audits. */
     private static final boolean SCREENING_INCLUDE_TIES =
             Boolean.getBoolean("dagfla.screeningAuditIncludeTies");
@@ -103,6 +106,11 @@ public final class FLAResearchExperiment {
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
+        if (BUDGET_REPLAY_REPLICATE < 0 || BUDGET_REPLAY_REPLICATE > 1024)
+            throw new IllegalArgumentException("random replay replicate out of range");
+        if (BUDGET_REPLAY_REPLICATE != 0 &&
+                (BUDGET_REPLAY_K == 0 || !"random".equals(BUDGET_REPLAY_POLICY)))
+            throw new IllegalArgumentException("random replicate only applies to prospective random policy");
         if (BUDGET_REPLAY_K > 0 && SCREENING_AUDIT_N > 0)
             throw new IllegalArgumentException("Prospective K-limited replay cannot be combined with the extra-replay audit");
         if (SCREENING_ALL_VISITED && (!SCREENING_INCLUDE_TIES || SCREENING_AUDIT_N == 0))
@@ -231,6 +239,7 @@ public final class FLAResearchExperiment {
             Files.write(protocol, Arrays.asList(
                     "PROSPECTIVE_REPLAY_BUDGET_K=" + BUDGET_REPLAY_K,
                     "PROSPECTIVE_REPLAY_POLICY=" + BUDGET_REPLAY_POLICY,
+                    "PROSPECTIVE_REPLAY_REPLICATE=" + BUDGET_REPLAY_REPLICATE,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
                     "Pre-simulation selection: " + BUDGET_REPLAY_POLICY +
                     " (Pareto layer + max-min coverage, or deterministically seeded uniform random)",
@@ -609,9 +618,11 @@ public final class FLAResearchExperiment {
         if(list.size()<budget)throw new IllegalStateException("Insufficient distinct history for K");
         list.sort(Comparator.comparing(FLAResearchExperiment::canonicalMappingKey));
         long salt=(((long)algorithm.hashCode())*0x9E3779B97F4A7C15L)
-                ^ 0xD1B54A32D192ED03L ^ seed;
+                ^ 0xD1B54A32D192ED03L ^ seed
+                ^ ((long)BUDGET_REPLAY_REPLICATE*0xBF58476D1CE4E5B9L);
         Collections.shuffle(list,new Random(salt));
         System.out.println("PASS prospective planned-only random replay selection K="+budget
+                +" replicate="+BUDGET_REPLAY_REPLICATE
                 +" uniqueHistory="+unique.size());
         return new ArrayList<>(list.subList(0,budget));
     }
