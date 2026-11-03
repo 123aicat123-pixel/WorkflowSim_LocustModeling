@@ -1,0 +1,51 @@
+name: FLA Matched-Assignment VM-Speed Fidelity Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-matched-speed-fidelity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  matched-speed-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit-test pairing and exact-genotype deduplication
+        run: |
+          set -euo pipefail
+          python3 -m unittest -v scripts/test_fla_matched_speed_fidelity.py
+          python3 -m py_compile scripts/fla_matched_speed_fidelity.py
+      - name: Download immutable original real-DAX v17 K16 replays
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41626382711
+          github-token: ${{ github.token }}
+          pattern: v17-confirm-*-41626382711
+          path: original/real
+      - name: Download immutable new-synthetic v17 K16 replays
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41631739331
+          github-token: ${{ github.token }}
+          pattern: v17-synthetic-*-41631739331
+          path: original/synthetic
+      - name: Audit same assignments across VM speed regimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_matched_speed_fidelity.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis-source-sha.txt
+          printf '%s\n' 'Original K16 WorkflowSim runs: 41626382711 and 41631739331' > reports/source-run-ids.txt
+          cat reports/matched_speed_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve results, logs and audit provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-matched-speed-fidelity-${{ github.run_id }}
+          path: reports
+          retention-days: 90
