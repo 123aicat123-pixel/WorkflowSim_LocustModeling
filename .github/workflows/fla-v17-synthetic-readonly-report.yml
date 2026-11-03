@@ -17,7 +17,7 @@ jobs:
         with:
           run-id: 41631739331
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          pattern: v17-SynthNew*-41631739331
+          pattern: v17-synthetic-SynthNew*-41631739331
           path: original
       - name: Independently re-score original K16 records with correct three-seed report header
         shell: bash
