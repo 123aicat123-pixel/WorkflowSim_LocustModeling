@@ -47,7 +47,7 @@ jobs:
           python3 - <<'PY'
           import pathlib,re
           log=pathlib.Path('ci-logs/v11-bandit.log').read_text()
-          hit=re.findall(r'FLA_PHASE_BANDIT usesBaseline=(\\d+) usesColocate=(\\d+) usesCritical=(\\d+) archiveAdmissionsBaseline=(\\d+) archiveAdmissionsColocate=(\\d+) archiveAdmissionsCritical=(\\d+)',log)
+          hit=re.findall(r'FLA_PHASE_BANDIT usesBaseline=(\d+) usesColocate=(\d+) usesCritical=(\d+) archiveAdmissionsBaseline=(\d+) archiveAdmissionsColocate=(\d+) archiveAdmissionsCritical=(\d+)',log)
           assert len(hit)==1,hit
           n=list(map(int,hit[0]))
           assert sum(n[:3])==3000,n
