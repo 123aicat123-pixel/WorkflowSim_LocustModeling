@@ -636,3 +636,21 @@ Thus **neither paired contrast has established statistical significance under th
 [Immutable source replay, full five-reference-point recalculation, per-seed CSV, exact family sign-flip and deterministic bootstrap report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41573075236).
 
 **Research decision:** v12-hvbandit is the current best *hypothesis candidate* worth further cross-size/cross-environment testing. It is not a default-on algorithm and has not demonstrated a statistically robust, general or Q1-publication-level search advantage over fair seeded NSGA-II. The comparison only replays candidates selected as non-dominated under planning objectives; complete simulator nondominated fronts of ALL evaluated genotypes are not yet assessed at the 3030-evaluation level.
+
+
+## V12 50-task cross-size validation: advantage shrinks
+
+To assess whether the v12 continuous planned-HV credit transfers beyond the 100-task setting, the unchanged v7-costseed, v12-hvbandit and costseed NSGA-II were compared on **CyberShake_50, Inspiral_50 and Montage_50 × five seeds**. The experiments used population 30 and 100 generations, the exact same first TWO task-to-VM cost initialization assignments in all three arms, precisely 3030 true target-objective evaluations per arm, and independent WorkflowSim replay. One simulator-HV reference was frozen per family across all three algorithms and seeds.
+
+| 50-task family | v12 vs v7 simulated HV | v12 vs identically seeded NSGA-II |
+|---|---:|---:|
+| CyberShake_50 | −0.069% (2/5 wins) | −1.654% (0/5 wins) |
+| Inspiral_50 | +0.750% (4/5 wins) | +0.272% (3/5 wins) |
+| Montage_50 | +0.560% (3/5 wins) | +2.598% (3/5 wins) |
+| **All 15 paired cases** | **+0.414% (9/15 wins)** | **+0.405% (6/15 wins)** |
+
+At 50 tasks, the pooled v12 effect versus identically cost-seeded NSGA-II is nearly zero and v12 wins only 6/15 per-seed tests, in contrast with the 100-task mean +1.380% and 16/25 wins. Thus the advantage is **not uniformly transferable across workflow sizes or families**, and it remains scientifically inappropriate to claim general FLA-specific superiority or statistical significance.
+
+[Actual 50-task cross-size workflow logs, exact assignment/budget assertions, raw WorkflowSim candidate replays and single-reference report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41573256094).
+
+A new 100-task **planned-Pareto-screening sensitivity audit** for the v12/v7/seeded-NSGA triple-arm experiment was triggered as `fla-v12-screening-100task.yml` to check whether using only *planning* nondominated replayed candidates biases the reported simulator-HV comparison. Unlike routine fitness evaluations, these additional diagnostic replays happen only AFTER search and may not be added to optimizer search budgets.
