@@ -1,0 +1,40 @@
+name: Read-only 36-Call Priority-Aware Forecast Independent Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-forecast-readonly.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  independent-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all original actual WorkflowSim plus forecast artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41681448520
+          github-token: ${{ github.token }}
+          pattern: fla-priority-forecast-*-41681448520
+          path: original
+      - name: Validate every assignment/policy and all signed forecast gaps
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_priority_aware_prediction_actual_audit.py
+          python3 scripts/fla_priority_aware_prediction_actual_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          printf 'Original 36 true simulator priority forecasts: 41681448520\n' > reports/original-run-id.txt
+          cat reports/priority_aware_forecast_conclusions.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all signed successes, failures, and matched actual cases
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-forecast-independent-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
