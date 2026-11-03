@@ -65,6 +65,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static int CONFIG_EDGE_RELOCATION_MODE = 0;
     /** v10 makespan-critical single-gene relocation; 0=off,1=fast,2=cost-guarded. */
     public static int CONFIG_CRITICAL_RELOCATION_MODE = 0;
+    /** Post-search, planning-only directional calibration; disabled by default. */
+    public static boolean CONFIG_CRITICAL_LOCAL_AUDIT = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -414,6 +416,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.searchTrace = new ArrayList<>();
         for (double[] a : searchTrace) { m.searchTrace.add(a.clone()); }
         lastRun = m;
+        if(CONFIG_CRITICAL_LOCAL_AUDIT && criticalRelocationMode!=0)
+            runCriticalLocalAudit();
         System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d criticalRelocationChanges=%d%n",
                 m.paretoFrontSize,m.chosenMakespan,m.chosenCost,m.objectiveEvaluations,
                 m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges,m.criticalRelocationChanges);
@@ -678,6 +682,47 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 : (r < 0.95 || third < 0) ? second : third;
     }
 
+
+    /**
+     * Post-search counterfactual. Compare whether one v10 proposal truly
+     * improves makespan under the independent stage-in-aware PLANNING model.
+     *
+     * This never calls the optimizer's target evaluator and therefore does
+     * not consume/record fitness evaluations. Both direct planning estimates
+     * are OUTSIDE optimization and no mutated genotype is reinserted into the
+     * selected solution/archive. They are NOT independent WorkflowSim replay.
+     */
+    private void runCriticalLocalAudit() {
+        StageInAwareScheduleEvaluator independent =
+                new StageInAwareScheduleEvaluator(taskOrder,vmList);
+        int proposed=0,proxyImproves=0,trueImproves=0,agreement=0;
+        double meanTrueDelta=0.0,meanProxyDelta=0.0;
+        for(Solution parent:population()) {
+            int[] before=parent.genes.clone();
+            int[] after=before.clone();
+            double p0=approximateMakespan(before,null);
+            criticalRelocate(after);
+            if(Arrays.equals(before,after))continue;
+            proposed++;
+            double p1=approximateMakespan(after,null);
+            double t0=independent.evaluate(evaluator.toAssignment(before)).makespan;
+            double t1=independent.evaluate(evaluator.toAssignment(after)).makespan;
+            boolean predictedPositive=p0-p1>1e-9;
+            boolean truePositive=t0-t1>1e-9;
+            if(predictedPositive)proxyImproves++;
+            if(truePositive)trueImproves++;
+            if(predictedPositive==truePositive)agreement++;
+            meanProxyDelta+=100.0*(p0-p1)/Math.max(EPS,p0);
+            meanTrueDelta+=100.0*(t0-t1)/Math.max(EPS,t0);
+        }
+        if(proposed>0){
+            meanProxyDelta/=proposed;
+            meanTrueDelta/=proposed;
+        }
+        System.out.printf(java.util.Locale.ROOT,
+                "FLA_CRITICAL_LOCAL_AUDIT proposed=%d predictedPositive=%d stageInPositive=%d directionalAgreement=%d meanPredictedImprovementPct=%.9f meanStageInImprovementPct=%.9f%%n",
+                proposed,proxyImproves,trueImproves,agreement,meanProxyDelta,meanTrueDelta);
+    }
 
     /**
      * v10 surrogate for critical-path time only. This is NOT an extra
