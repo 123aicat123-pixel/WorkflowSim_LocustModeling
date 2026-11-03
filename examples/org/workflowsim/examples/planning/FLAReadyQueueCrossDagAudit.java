@@ -48,8 +48,8 @@ public final class FLAReadyQueueCrossDagAudit {
         return out;
     }
     public static void main(String[] args) throws Exception {
-        if(args.length!=2)throw new IllegalArgumentException(
-            "Usage: FLAReadyQueueCrossDagAudit WORKFLOW OUTPUT_CSV");
+        if(args.length!=2 && args.length!=3)throw new IllegalArgumentException(
+            "Usage: FLAReadyQueueCrossDagAudit WORKFLOW OUTPUT_CSV [ONE_FROZEN_MAPPING_POLICY]");
         String workflow=args[0];
         if(!workflow.matches("[A-Za-z0-9_]+"))
             throw new IllegalArgumentException("Untrusted DAX name");
@@ -59,7 +59,11 @@ public final class FLAReadyQueueCrossDagAudit {
         int tasks=countOriginalDaxTasks(workflow);
         Path path=Paths.get(args[1]);
         if(path.getParent()!=null)Files.createDirectories(path.getParent());
-        String[] policies={"all_vm0","all_vm12","round_robin","stride7"};
+        String[] policies=args.length==3?new String[]{args[2]}:
+                new String[]{"all_vm0","all_vm12","round_robin","stride7"};
+        // Validate BEFORE starting any simulation, including the optional
+        // single-policy mechanism probe; original 2-argument behavior unchanged.
+        for(String policy:policies) mapping(tasks,policy);
         Log.disable();
         try(BufferedWriter out=Files.newBufferedWriter(path,StandardCharsets.UTF_8)) {
             out.write("workflow,speed,seed,policy,task_count,"
@@ -128,6 +132,7 @@ public final class FLAReadyQueueCrossDagAudit {
                     100*Math.abs(m.readyQueueMakespan-real.makespan)/real.makespan);
             }
         }
-        System.out.println("PASS four independent original-DAX-identity VM allocations, real simulator truth and passive new decoder");
+        System.out.println("PASS "+policies.length+
+            " independent original-DAX-identity VM allocations, real simulator truth and passive new decoder");
     }
 }
