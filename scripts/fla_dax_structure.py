@@ -39,6 +39,7 @@ def inspect_dax(path):
     if n == 0:
         raise ValueError("No jobs in " + str(path))
     durations = {}
+    invalid_runtimes = 0
     producers, consumers = {}, {}
     bad_links = 0
     invalid_file_sizes = 0
@@ -46,7 +47,13 @@ def inspect_dax(path):
         identifier = node.get("id")
         if not identifier or identifier in durations:
             raise ValueError("Missing or duplicate job id: " + str(identifier))
-        durations[identifier] = nonnegative_number(node.get("runtime"), "job runtime")
+        try:
+            durations[identifier] = nonnegative_number(node.get("runtime"), "job runtime")
+        except ValueError:
+            # Preserve topology; suppress EVERY derived runtime/critical-path
+            # statistic for the entire DAX when any runtime is invalid.
+            durations[identifier] = 0.
+            invalid_runtimes += 1
         inputs, outputs = {}, {}
         for f in children(node, "uses"):
             name, link = f.get("file"), f.get("link")
@@ -122,6 +129,7 @@ def inspect_dax(path):
     critical_runtime = max(weighted_end.values())
     if critical_runtime < 0 or critical_runtime > runtime_sum + 1e-8 * max(1, runtime_sum):
         raise AssertionError("Invalid weighted critical path")
+    runtime_valid = invalid_runtimes == 0
 
     matched_edges = 0
     logical_bytes = 0.
@@ -159,10 +167,12 @@ def inspect_dax(path):
         join_tasks=sum(d > 1 for d in indegree.values()),
         fork_tasks=sum(len(xs) > 1 for xs in nxt.values()),
         max_level_width=layer_width, depth_levels=max(depth.values())+1,
-        runtime_sum_dax=runtime_sum, runtime_mean_dax=runtime_sum / n,
-        critical_path_runtime_dax=critical_runtime,
-        critical_runtime_share=critical_runtime/runtime_sum if runtime_sum > 0 else 0.,
-        work_span_parallelism_proxy=runtime_sum/critical_runtime if critical_runtime > 0 else 0.,
+        invalid_dax_runtime_jobs=invalid_runtimes,
+        runtime_sum_dax=runtime_sum if runtime_valid else "",
+        runtime_mean_dax=runtime_sum/n if runtime_valid else "",
+        critical_path_runtime_dax=critical_runtime if runtime_valid else "",
+        critical_runtime_share=critical_runtime/runtime_sum if runtime_valid and runtime_sum > 0 else "",
+        work_span_parallelism_proxy=runtime_sum/critical_runtime if runtime_valid and critical_runtime > 0 else "",
         edges_with_common_file=matched_edges,
         edges_without_common_file=len(edge_set)-matched_edges,
         declared_intertask_file_bytes=logical_bytes,
@@ -204,9 +214,12 @@ def main():
     records = inspect_paths(paths)
     save_csv(args.out, records)
     for r in records:
-        print("%s parsed_jobs=%d declared_jobs=%s edges=%d depth=%d roots=%d CP_DAX=%.4f"
+        cp=r["critical_path_runtime_dax"]
+        print("%s parsed_jobs=%d declared_jobs=%s edges=%d depth=%d roots=%d CP_DAX=%s bad_runtimes=%d bad_file_sizes=%d"
               % (r["workflow"],r["task_count"],r["declared_job_count"],
-                 r["edge_count"],r["depth_levels"],r["roots"],r["critical_path_runtime_dax"]))
+                 r["edge_count"],r["depth_levels"],r["roots"],
+                 ("%.4f" % cp) if cp != "" else "UNAVAILABLE",
+                 r["invalid_dax_runtime_jobs"],r["invalid_dax_file_size_references"]))
     print("PASS DAX structural audit: %d workflows, acyclic, validated job and child counts" % len(records))
 
 if __name__ == "__main__":
