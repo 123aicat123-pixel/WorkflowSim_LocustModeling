@@ -47,9 +47,12 @@ class StructureTests(unittest.TestCase):
         self.assertEqual(x["edges_without_common_file"], 1)
         self.assertEqual(x["parent_child_file_size_disagreements"], 0)
 
-    def test_count_mismatch_fails(self):
-        with self.assertRaisesRegex(ValueError, "jobCount"):
-            self.run_dax(FIXTURE.replace('jobCount="3"', 'jobCount="2"'))
+    def test_count_mismatch_is_audited_not_silently_accepted(self):
+        x=self.run_dax(FIXTURE.replace('jobCount="3"', 'jobCount="2"'))
+        self.assertEqual(x["task_count"],3)
+        self.assertEqual(x["declared_job_count"],"2")
+        self.assertEqual(x["declared_job_count_mismatch"],1)
+        self.assertEqual(x["declared_child_count_mismatch"],0)
 
     def test_cycle_fails(self):
         x = FIXTURE.replace('childCount="2"', 'childCount="3"')
