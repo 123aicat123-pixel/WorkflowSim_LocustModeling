@@ -40,7 +40,7 @@ jobs:
           java -Dworkflowsim.planningStageInAware=true \
             -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
             '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
-            'Output&Results/factorial_${{ matrix.workflow }}_s${{ matrix.seed }}' costseed-factorial \
+            'Output&Results/factorialholdout_${{ matrix.workflow }}_s${{ matrix.seed }}' costseed-factorial \
             2>&1 | tee ci-logs/factorial.log
           grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/factorial.log
       - name: Assert four groups, exact budgets, individual replay consistency
@@ -72,7 +72,7 @@ jobs:
           name: factorialholdout-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
           path: |
             ci-logs/
-            Output&Results/factorial_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+            Output&Results/factorialholdout_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
           retention-days: 90
           if-no-files-found: warn
   aggregate:
