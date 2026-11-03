@@ -1,0 +1,36 @@
+name: v15 Read-only Original Experiment Genotype Diversity Diagnostic
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v15-readonly-diversity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41618003870
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: v15-*-${{ github.run_id == 0 && '' || '41618003870' }}
+          path: original
+      - name: Audit original eight experiment jobs without new optimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v15_diversity_audit.py
+          python3 scripts/fla_v15_diversity_audit.py original reports | tee reports/diagnostic.log
+          git rev-parse HEAD > reports/analysis_source_sha.txt
+          cat reports/v15_diversity_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v15-readonly-diversity-${{ github.run_id }}
+          path: reports
+          retention-days: 90
