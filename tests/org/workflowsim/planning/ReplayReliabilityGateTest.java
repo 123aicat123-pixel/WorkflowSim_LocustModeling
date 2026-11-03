@@ -24,7 +24,7 @@ public final class ReplayReliabilityGateTest {
         check(!ReplayReliabilityGate.trust(list(new double[][]{p[0],p[1]}),
             list(new double[][]{accurate[0],accurate[1]})),"two replays cannot justify gate");
         try {
-            ReplayReliabilityGate.trust(list(p),list(new double[][]{{100,220}});
+            ReplayReliabilityGate.trust(list(p),list(new double[][]{{100,220}}));
             throw new AssertionError("mismatch accepted");
         } catch(IllegalArgumentException expected) {}
 
