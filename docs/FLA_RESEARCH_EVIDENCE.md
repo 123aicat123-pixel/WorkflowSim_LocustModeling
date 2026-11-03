@@ -544,3 +544,27 @@ V11 successfully adapted its operator frequencies by DAG and FLA phase. For exam
 The earlier v11 pilot attempt [41570077328](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41570077328) failed its expected bandit-statistics assertion, whereas the corrected rerun above passed and produced an aggregated report. Do not confuse the two run outcomes.
 
 **Research implication:** Prefer diagnostics of *local* multiobjective benefit and simulation-aligned reward, with every additional true objective evaluation explicitly charged to the same budget as equally initialized NSGA-II. Continued testing of arbitrary new operators without an untouched validation family is likely to overfit the five frequently reused DAG families. At present v7-costseed is still a candidate, not a demonstrated stronger FLA-specific optimizer.
+
+
+## V12 continuous-HV bandit development study (2026-11-03)
+
+V11 used only a BINARY planned Pareto archive admission reward to choose among FLA baseline, DAG-edge co-location and critical-task VM relocation; its earlier 9-case development run had average simulator-HV **−0.765%** versus v7 despite the controller being active. We created an optional, default-OFF **v12-hvbandit** to test a more informative but still strictly budget-neutral feedback signal.
+
+V12 retains the exact three FLA DO/EO/SSO-specific UCB arm-choice structure and the same one true stage-in-aware objective evaluation per child. The reward is the **increment in 2D hypervolume of the PLANNED nondominated archive** after inserting that already-evaluated child, normalized against 1% of the pre-insertion archive HV and clipped to [0,1]. Before and after are measured with the SAME temporary reference point chosen from existing archive points and that child. Computing reward only performs in-memory arithmetic; it does not invoke the true target fitness evaluator again and does not use the independent WorkflowSim outcome as a training reward. The resulting reward is heuristic and subject to planned-to-simulated fidelity limitations.
+
+A controlled development study compared v7-costseed (control), static v9-colocate, v11 binary-admission UCB, and v12 continuous planned-HV UCB on **CyberShake_100, Montage_100 and Sipht_100 × 3 paired seeds**. Each optimization ran 30 population × 100 generations, exactly **3030 target fitness evaluations**, with simulator-replayed planned-nondominated candidate fronts and a single shared frozen HV reference per workflow over all solvers and seeds.
+
+| 100-task DAG | v11 vs v7 paired simulator HV | v12 vs v7 paired simulator HV |
+|---|---:|---:|
+| CyberShake_100 | −0.640% | −0.803% |
+| Montage_100 | +3.384% | +4.267% |
+| Sipht_100 | −5.079% | +0.835% |
+| **Nine development cases** | **−0.778%, 4/9 better** | **+1.433%, 5/9 better** |
+
+V12 mitigated the v11 performance collapse on Sipht_100 in the observed development cases but **did not improve CyberShake**, and its overall gain is small and unconfirmed. It visited at least about **98.878%–99.802%** distinct assignments (family means), but high novelty alone does not prove good Pareto coverage. Compared with the unchanged v7 variant on the same exact experiment, v12 has **not yet established any robust superiority** over equally initialized NSGA-II.
+
+[Corrected v12 nine-case actual WorkflowSim simulator-HV run, continuous-feedback activation assertions, objective evaluation counts and CSVs](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41571434014).
+
+The earlier v12 workflow run `41571402736` accidentally used the nonexisting control label `v12-bandit` instead of `v11-bandit`, and must NOT be used as evidence. The corrected run above used the actual v11 and v12 variants and completed successfully.
+
+We also added a **separate triple-arm variant-held-out fairness comparison** (`fla-v12-heldout-fairness.yml`), targeting Epigenomics_100 and Inspiral_100, three seeds each. It directly checks identical two initial low-cost task assignments for v7, v12 and cost-seeded NSGA-II, 3030 fitness evaluations each, and a shared frozen simulator reference. This later verification must be examined **before** promoting v12 beyond an exploratory development variant. These workflow families were studied in prior research and therefore are not an entirely untouched publication dataset.
