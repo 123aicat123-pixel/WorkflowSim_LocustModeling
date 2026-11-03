@@ -137,6 +137,11 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
         public double readyQueueTotalStageInSeconds;
         public double[] readyQueueStarts;
         public double[] readyQueueFinishes;
+        /** Opt-in prediction under SAME runtime ready-job priority policy. */
+        public double policyForecastMakespan;
+        public double policyForecastCost;
+        public double[] policyForecastStarts;
+        public double[] policyForecastFinishes;
         /** Optional detached fixed-genotype planning task timeline, for passive diagnostics ONLY. */
         public int[] traceTaskIds;
         public int[] traceVmIds;
@@ -378,6 +383,18 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
             metrics.readyQueueTotalStageInSeconds=predicted.totalStageInSeconds;
             metrics.readyQueueStarts=predicted.starts.clone();
             metrics.readyQueueFinishes=predicted.finishes.clone();
+        }
+        if(Boolean.getBoolean("dagfla.priorityAwarePredictionDiagnostic")) {
+            ReadyQueueScheduleEvaluator.QueuePolicy fixedPolicy =
+                ReadyQueueScheduleEvaluator.fromRuntimeName(
+                    System.getProperty("dagfla.fixedVmReadyPriority","fifo"));
+            ReadyQueueScheduleEvaluator.Result prediction=
+                new ReadyQueueScheduleEvaluator(taskOrder,vmList,fixedPolicy)
+                    .evaluate(toAssignment(commitGenotype));
+            metrics.policyForecastMakespan=prediction.makespan;
+            metrics.policyForecastCost=prediction.cost;
+            metrics.policyForecastStarts=prediction.starts.clone();
+            metrics.policyForecastFinishes=prediction.finishes.clone();
         }
         if (Boolean.getBoolean("dagfla.fixedTaskTrace")) {
             int traceN=taskOrder.size();
