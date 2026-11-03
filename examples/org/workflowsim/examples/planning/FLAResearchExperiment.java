@@ -717,12 +717,18 @@ public final class FLAResearchExperiment {
         }
         try(BufferedWriter w=Files.newBufferedWriter(Paths.get(prefix+"_limitations.txt"),StandardCharsets.UTF_8)) {
             w.write("All algorithms use the same simulated Pareto/HV reference within this workflow/seed.\n");
-            w.write("Replayed sets are selected from each algorithm's PLANNED nondominated records, not every evaluation.\n");
+            if (BUDGET_REPLAY_K > 0) {
+                w.write("Prospective experiment: replay exactly K=" + BUDGET_REPLAY_K +
+                        " distinct evaluated assignments per solver, selected using planned objectives only.\n");
+                w.write("This selection is Pareto-layer first with normalized max-min planned-objective diversity.\n");
+            } else {
+                w.write("Historical experiment: replay selected planned-nondominated records, not every visited genotype.\n");
+            }
             w.write("FLA-3W combines three independent scalar runs; native optimizers each use one population.\n");
             w.write("Total evaluations are reported and aligned as closely as possible; warm starts disabled.\n");
             w.write("FLA-3W has three runs and MLEAO receives extra generations to align actual evaluation counts.\n");
             w.write("UnifiedCandidateRecorder observes EVERY successful evaluation, including seeds and FLA normalization probes.\n");
-            w.write("Planning-nondominated assignments over ALL visited schedules are replayed.\n");
+            w.write("Search fitness evaluation count is separate from actual WorkflowSim assignment replay count.\n");
             w.write("This experiment does not establish algorithm fidelity or statistical superiority.\n");
             w.write("Independent planned objectives are re-evaluated with the unified LIWSA decoder for every replay.\n");
         }
