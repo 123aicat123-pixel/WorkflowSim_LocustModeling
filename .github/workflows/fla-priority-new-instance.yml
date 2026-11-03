@@ -1,0 +1,109 @@
+name: FLA Priority-Aware Decoder New-Instance Falsification
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-new-instance.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fresh-instance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        workflow: [Inspiral_30, Epigenomics_100]
+        vm_profile: [default, staggered]
+        placement: [round_robin, stride7]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean Java compile and task priority predictive hand oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueuePriorityForecastTest | tee reports/priority-predict-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.scheduling.FLAFixedVmReadyPriorityTest | tee reports/runtime-priority-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-queue-original-oracle.log
+      - name: Simulate identical genotype across all 3 priority controls with frozen forecasts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for priority in fifo shortest upward; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.fixedTaskTrace=true \
+              -Ddagfla.readyQueueDiagnostic=true \
+              -Ddagfla.priorityAwarePredictionDiagnostic=true \
+              -Ddagfla.fixedVmReadyPriority="$priority" \
+              -Dliwsa.vmSpeedProfile='${{ matrix.vm_profile }}' \
+              -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAReadyQueueCrossDagAudit \
+              '${{ matrix.workflow }}' "reports/${priority}.csv" '${{ matrix.placement }}' \
+              > "reports/${priority}.log" 2>&1 || {
+                tail -90 "reports/${priority}.log"
+                exit 1
+              }
+          done
+          python3 - <<'PY'
+          import csv,math,pathlib
+          p=pathlib.Path('reports')
+          policies=('fifo','shortest','upward')
+          data={}
+          for mode in policies:
+            with (p/f'{mode}.csv').open(newline='') as f: z=list(csv.DictReader(f))
+            assert len(z)==1,z
+            row=z[0]
+            assert row['workflow']=='${{ matrix.workflow }}' and row['speed']=='${{ matrix.vm_profile }}'
+            assert row['policy']=='${{ matrix.placement }}' and row['runtime_priority']==mode
+            for field in ('actual_makespan','actual_cost','new_ready_makespan',
+                          'policy_model_makespan','new_ready_cost','policy_model_cost',
+                          'new_makespan_abs_pct','policy_makespan_abs_pct',
+                          'new_cost_abs_pct','policy_cost_abs_pct','policy_start_mae','policy_finish_mae'):
+              assert math.isfinite(float(row[field])) and float(row[field])>=0,(field,row)
+            assert float(row['actual_makespan'])>0 and float(row['actual_cost'])>0
+            if mode=='fifo':
+              assert math.isclose(float(row['policy_model_makespan']),float(row['new_ready_makespan']),rel_tol=1e-10,abs_tol=1e-8)
+            data[mode]=row
+          ref=data['fifo']
+          output=['# Frozen predictor, new DAG instance and VM-speed profile',
+            'Original Task-ID→VM identity and actual WorkflowSim timing validated by replay harness.\n',
+            '| Runtime priority | Old Task-ID ready MAPE | Priority-aware MAPE | Real Makespan | Actual change vs FIFO | Forecast change vs FIFO |',
+            '|---|---:|---:|---:|---:|---:|']
+          derived=[]
+          for mode in policies:
+            row=data[mode]
+            actual=100*(float(row['actual_makespan'])/float(ref['actual_makespan'])-1)
+            pred=100*(float(row['policy_model_makespan'])/float(ref['policy_model_makespan'])-1)
+            derived.append(dict(workflow=row['workflow'],vm_profile=row['speed'],
+               placement=row['policy'],priority=mode,
+               actual_makespan=float(row['actual_makespan']),actual_cost=float(row['actual_cost']),
+               old_model_abs_pct=float(row['new_makespan_abs_pct']),
+               new_model_abs_pct=float(row['policy_makespan_abs_pct']),
+               delta_abs_error_pp=float(row['policy_makespan_abs_pct'])-float(row['new_makespan_abs_pct']),
+               actual_effect_pct=actual,predicted_effect_pct=pred,effect_error_pp=pred-actual,
+               policy_start_mae_s=float(row['policy_start_mae']),
+               policy_finish_mae_s=float(row['policy_finish_mae'])))
+            output.append(f"| {mode} | {float(row['new_makespan_abs_pct']):.6f}% | "
+                 f"{float(row['policy_makespan_abs_pct']):.6f}% | "
+                 f"{float(row['actual_makespan']):.6f} s | {actual:+.6f}% | {pred:+.6f}% |")
+          with (p/'three_actual_priority_forecasts.csv').open('w',newline='') as f:
+            w=csv.DictWriter(f,fieldnames=list(derived[0]));w.writeheader();w.writerows(derived)
+          output+=['','These are new DAX instances in previously studied DAG families; no publication-level inference.']
+          (p/'new_instance_priority_report.md').write_text('\n'.join(output)+'\n')
+          print('\n'.join(output))
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_PRIORITY_NEW_INSTANCE_FROZEN_GATE_2026-11-04.md reports/frozen-protocol.md
+          cat reports/new_instance_priority_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all actual outcomes, raw errors and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-new-instance-priority-${{ matrix.workflow }}-${{ matrix.vm_profile }}-${{ matrix.placement }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
