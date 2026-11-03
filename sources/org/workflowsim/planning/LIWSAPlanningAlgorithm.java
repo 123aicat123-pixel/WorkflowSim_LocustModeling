@@ -131,6 +131,12 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
         public double stageInAwareTotalSeconds;
         public double stageInAwareExternalSeconds;
         public double stageInAwareIntermediateSeconds;
+        /** Opt-in read-only ready-queue estimate for the committed genotype. */
+        public double readyQueueMakespan;
+        public double readyQueueCost;
+        public double readyQueueTotalStageInSeconds;
+        public double[] readyQueueStarts;
+        public double[] readyQueueFinishes;
         /** Optional detached fixed-genotype planning task timeline, for passive diagnostics ONLY. */
         public int[] traceTaskIds;
         public int[] traceVmIds;
@@ -363,6 +369,16 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
         metrics.stageInAwareTotalSeconds = stageInPrediction.stageInSeconds;
         metrics.stageInAwareExternalSeconds = stageInPrediction.externalStageInSeconds;
         metrics.stageInAwareIntermediateSeconds = stageInPrediction.intermediateStageInSeconds;
+        if(Boolean.getBoolean("dagfla.readyQueueDiagnostic")) {
+            ReadyQueueScheduleEvaluator.Result predicted =
+                new ReadyQueueScheduleEvaluator(taskOrder,vmList)
+                    .evaluate(toAssignment(commitGenotype));
+            metrics.readyQueueMakespan=predicted.makespan;
+            metrics.readyQueueCost=predicted.cost;
+            metrics.readyQueueTotalStageInSeconds=predicted.totalStageInSeconds;
+            metrics.readyQueueStarts=predicted.starts.clone();
+            metrics.readyQueueFinishes=predicted.finishes.clone();
+        }
         if (Boolean.getBoolean("dagfla.fixedTaskTrace")) {
             int traceN=taskOrder.size();
             metrics.traceTaskIds=new int[traceN];
