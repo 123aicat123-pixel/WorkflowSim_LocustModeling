@@ -60,6 +60,20 @@ Secondary reference 3×: shamrandom vs v12 −0.252721%, shamtimeline vs v12 −
 
 These are **development** experiments with two seeds and previously examined workflows, not an untouched Q1 journal holdout. Keep v12 as principal research candidate, leave v14/v15/v16 off-by-default, and avoid retuning thresholds on this repeatedly observed corpus as if it were independent validation.
 
+## Read-only phase opportunity and planned archive investigation
+
+After the main six-arm run, I performed a **no-new-fitness/no-new-simulator** [read-only phase analysis, Actions 41623588302](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41623588302) from the same eight original job artifacts (source SHA `b890475aa1d162478ec420e79d740828a856e11c`). All files passed source-identity and 101-generation coverage checks. The case-level and aggregate CSV, report and analysis logs are archived in `fla-v16-phase-readonly-41623588302`, ID `13224158778`.
+
+| FLA phase | v12 total normal bandit opportunities (8 blocks) | Each paired arm's normal bandit opportunities (8 blocks) | Actual random vs sham random planned archive admissions / generation | Actual timeline vs sham timeline planned archive admissions / generation |
+|---|---:|---:|---:|---:|
+| DO | 17,760 | 9,472 | +0.4510 | +0.9155 |
+| EO | 3,360 | 1,792 | −0.5714 | −0.8661 |
+| SSO | 2,880 | 1,536 | −1.8542 | −0.0625 |
+
+Mean pairwise genotype-Hamming differences (active minus own sham), respectively random and timeline: DO **−0.012421**, **−0.025339**; EO **−0.013827**, **−0.003228**; SSO **−0.026576**, **−0.000655**. These are genotype distances, not front-cover metrics.
+
+**Mechanism interpretation:** within this development corpus actual local search was associated with more *planned Pareto archive admission events* than its sham in DO, but fewer in EO and SSO. This suggests (but does not prove) a phase-sensitive exploration design could be worth a separately preregistered pilot. Phases are deterministic iteration windows, so the observations are confounded by elapsed search progression, population convergence, and the sham's lack of useful novelty. Archive admissions are not a per-phase HV gain measure and may be subsequently removed. A DO-only active neighbor is a future **hypothesis**, not a validated improved v17.
+
 ## Recommended next stage
 
 Before adding another optimization heuristic, undertake a read-only mechanistic audit from the archived generation diagnostics, comparing sham versus actual neighbor per-generation archive admission counts and genotype diversity, and explaining which inference is actually possible. For a genuinely independent causal study, use an explicit preregistered factorial where a fixed stream of candidate proposals is shared as much as feasible and bandit updates are selectively replayed or disabled, with strict accounting of RNG state and fitness calls. Any new proposed improved FLA must eventually be verified on *unseen workflow DAG families* and independent VM settings with enough replications and real WorkflowSim outcomes.
