@@ -1,0 +1,97 @@
+name: Read-only Aggregate Fixed-Assignment VM-Speed Pilot
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-fixed-speed-readonly-report.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original actual 32-call fixed-assignment results
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41652845071
+          github-token: ${{ github.token }}
+          pattern: fixed-speed-*-41652845071
+          path: originals
+      - name: Verify independent archived pair CSV and report combined results
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY' | tee reports/read-only-report.md
+          import csv, pathlib, statistics
+          root=pathlib.Path('originals')
+          names=('Epigenomics_46','CyberShake_100')
+          records=[]
+          for name in names:
+              files=list(root.rglob('fixed_matched_speed_pairs.csv'))
+              per=[]
+              for p in files:
+                  rows=list(csv.DictReader(p.open()))
+                  if len(rows)==8 and set(r['workflow'] for r in rows)=={name}:
+                      per.append((p,rows))
+              assert len(per)==1,(name,[(str(p),len(rows)) for p,rows in per])
+              p,rows=per[0]
+              assert {r['algorithm'] for r in rows}=={'v12','nsga'}
+              assert {r['seed'] for r in rows}=={'211'}
+              assert {r['candidate_index'] for r in rows}=={'1','2','3','4'}
+              for alg in ('v12','nsga'):
+                  z=[r for r in rows if r['algorithm']==alg]
+                  assert len(z)==4 and len({r['mapping'] for r in z})==4
+              records.extend(rows)
+          assert len(records)==16
+          print('# Frozen exact-VM-mapping two-speed real WorkflowSim result')
+          print('')
+          print('Immutable original source Actions: 41652845071. 16 exact-mapping pairs and 32 real simulator replays. '
+                'All original default-profile planned and simulated values passed source-parity assertions in original Java jobs.')
+          print('')
+          print('| Workflow | Source solver | Mean planned makespan speed change | Mean actual makespan speed change | Mean absolute plan-vs-real effect gap | Max abs gap |')
+          print('|---|---|---:|---:|---:|---:|')
+          for name in names:
+              for alg in ('v12','nsga'):
+                  z=[r for r in records if r['workflow']==name and r['algorithm']==alg]
+                  calc=lambda k:[float(x[k]) for x in z]
+                  print(f"| {name} | {alg} | {statistics.mean(calc('planned_makespan_change_pct')):+.5f}% | "
+                    f"{statistics.mean(calc('actual_makespan_change_pct')):+.5f}% | "
+                    f"{statistics.mean(abs(x) for x in calc('makespan_speed_effect_error_pp')):.5f} pp | "
+                    f"{max(abs(x) for x in calc('makespan_speed_effect_error_pp')):.5f} pp |")
+          print('')
+          for alg in ('v12','nsga'):
+              z=[r for r in records if r['algorithm']==alg]
+              print(f"- {alg}: mean signed makespan-effect discrepancy "
+                    f"{statistics.mean(float(x['makespan_speed_effect_error_pp']) for x in z):+.5f} pp; "
+                    f"mean abs discrepancy "
+                    f"{statistics.mean(abs(float(x['makespan_speed_effect_error_pp'])) for x in z):.5f} pp.")
+          print('')
+          print('## Negative and large-error individual cases (all cases preserved in CSV)')
+          for r in sorted(records,key=lambda x:-abs(float(x['makespan_speed_effect_error_pp'])))[:6]:
+              print(f"- {r['workflow']}, {r['algorithm']}, candidate {r['candidate_index']}: "
+                    f"planned {float(r['planned_makespan_change_pct']):+.5f}%, "
+                    f"simulator {float(r['actual_makespan_change_pct']):+.5f}%, "
+                    f"gap {float(r['makespan_speed_effect_error_pp']):+.5f} pp")
+          print('')
+          print('Limits: fixed assignments are original default-selected K16 prefixes, NOT a randomly representative sample; '
+                'repeated cross-arm assignments are not independent. Only 2 previously seen DAG instances, one seed. '
+                'MIPS changes may affect task order and shared-cloud scheduling, not an isolated arithmetic effect. '
+                'This establishes neither a novel algorithm nor a Q1 publication superiority claim.')
+          with pathlib.Path('reports/combined_fixed_speed_pairs.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(records[0]))
+              w.writeheader();w.writerows(records)
+          PY
+          git rev-parse HEAD > reports/report-source-sha.txt
+          cat reports/read-only-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive full original-input-validated summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixed-speed-readonly-summary-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
