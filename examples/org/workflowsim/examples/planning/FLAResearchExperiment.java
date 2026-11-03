@@ -353,7 +353,7 @@ public final class FLAResearchExperiment {
             int generations,int pop) throws IOException {
         Path p=Paths.get(prefix+"_population_diagnostics.csv");
         try(BufferedWriter w=Files.newBufferedWriter(p,StandardCharsets.UTF_8)){
-            w.write("algorithm,generation,phase,selected_slots,selected_unique,selected_duplicate_slots,group1_unique,group2_unique,cross_group_overlap,pairwise_hamming_all,pairwise_hamming_group1,pairwise_hamming_group2,generated_unique,archive_insert_events,local_gate_rejections,bandit_baseline_uses,bandit_colocate_uses,bandit_critical_uses,archive_size,min_archive_makespan,min_archive_cost,objective_evaluations\\n");
+            w.write("algorithm,generation,phase,selected_slots,selected_unique,selected_duplicate_slots,group1_unique,group2_unique,cross_group_overlap,pairwise_hamming_all,pairwise_hamming_group1,pairwise_hamming_group2,generated_unique,archive_insert_events,local_gate_rejections,bandit_baseline_uses,bandit_colocate_uses,bandit_critical_uses,archive_size,min_archive_makespan,min_archive_cost,objective_evaluations\n");
             for(Run run:runs) {
                 if(run.algorithm.startsWith("NSGA-II"))continue;
                 if(run.populationDiagnostics.size()!=generations+1)
@@ -366,7 +366,7 @@ public final class FLAResearchExperiment {
                         throw new IllegalStateException("Population trace corrupt: "+run.algorithm+" generation="+j);
                     w.write(run.algorithm);
                     for(double value:row)w.write(String.format(Locale.ROOT,",%.17g",value));
-                    w.write("\\n");
+                    w.write("\n");
                     expectedEval+=pop;
                 }
             }
