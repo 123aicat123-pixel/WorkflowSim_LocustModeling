@@ -45,3 +45,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: warn
+
+# Reanalyze once all eight immutable original simulation artifacts are present.
