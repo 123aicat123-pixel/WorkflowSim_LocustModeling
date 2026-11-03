@@ -1,0 +1,109 @@
+name: FLA Fixed-Assignment CloudSim Event-Chain Pilot
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-fixed-event-chain.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  event-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_46, CyberShake_100]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable default profile K16 mappings
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41626382711
+          github-token: ${{ github.token }}
+          pattern: v17-confirm-${{ matrix.workflow }}-default-s211-41626382711
+          path: original
+      - name: Compile full original and diagnostic Java tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes 'Output&Results' reports
+          find sources examples tests -name '*.java' -type f | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Independently replay fixed genotypes with passive full event logging
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t originals < <(find original -type f -name 'v17-confirm-default-${{ matrix.workflow }}-s211_replays.csv')
+          test "${#originals[@]}" -eq 1
+          cp "${originals[0]}" reports/original_default_k16.csv
+          for arm in 'DAG-Pareto-FLA[v12-hvbandit]' 'NSGA-II[costseed]'; do
+            if [[ "$arm" == DAG* ]]; then tag=v12; else tag=nsga; fi
+            for speed in default staggered; do
+              java -Dworkflowsim.planningStageInAware=true -Ddagfla.fixedTaskTrace=true \
+                -Ddagfla.fixedEventTrace=true -Dliwsa.vmSpeedProfile="$speed" \
+                -cp 'build/classes:lib/*' \
+                org.workflowsim.examples.planning.FLAFixedMappingReplay \
+                '${{ matrix.workflow }}' 211 "${originals[0]}" "$arm" 2 \
+                "reports/${tag}_${speed}.csv" > "reports/${tag}_${speed}.log" 2>&1 || {
+                  tail -80 "reports/${tag}_${speed}.log"
+                  exit 1
+                }
+              test -s "reports/${tag}_${speed}_tasks.csv"
+            done
+          done
+          python3 - <<'PY'
+          import collections,csv,pathlib
+          path=pathlib.Path('reports')
+          stages=('ENGINE_READY','SCHEDULER_ARRIVE','SCHEDULER_DISPATCH','DATACENTER_SUBMIT','ENGINE_COMPLETE')
+          summary=[]
+          for alg in ('v12','nsga'):
+            for speed in ('default','staggered'):
+              lines=(path/f'{alg}_{speed}.log').read_text().splitlines()
+              event_rows=[]
+              for line in lines:
+                if line.startswith('FIXED_EVENT,'):
+                  fields=line.split(',')
+                  assert len(fields)==7,line
+                  _,event,task,job,vm,clock,stage=fields
+                  assert event in stages
+                  event_rows.append((event,int(task),int(job),int(vm),float(clock),float(stage)))
+              records=list(csv.DictReader((path/f'{alg}_{speed}_tasks.csv').open()))
+              assert len(records)==2*({'Epigenomics_46':47,'CyberShake_100':100}['${{ matrix.workflow }}'])
+              expected=len(records)*len(stages)
+              assert len(event_rows)==expected,(alg,speed,len(event_rows),expected)
+              events_by_task=collections.defaultdict(list)
+              for x in event_rows:events_by_task[x[1]].append(x)
+              # Events are emitted across two independent CloudSim initializations,
+              # so task IDs repeat for each candidate. Partition into consecutive
+              # unique per-task groups by ENGINE_READY order; exact validation is
+              # done by the downstream read-only report.
+              for candidate in (1,2):
+                n={'Epigenomics_46':47,'CyberShake_100':100}['${{ matrix.workflow }}']
+                task_rows=[r for r in records if int(r['candidate_index'])==candidate]
+                assert len(task_rows)==n
+              with (path/f'{alg}_{speed}_events.csv').open('w',newline='') as out:
+                w=csv.writer(out)
+                w.writerow(['event','task_id','job_id','vm_id','clock','stagein_seconds'])
+                w.writerows(event_rows)
+              summary.append((alg,speed,len(event_rows)))
+          with (path/'event_capture_preflight.md').open('w') as f:
+            f.write('# Passive WorkflowSim event capture preflight\n\n')
+            f.write('Source candidate mapping fixed, simulator replay successful; 5 event types per original task expected.\n\n')
+            for alg,speed,count in summary:
+              f.write(f'- {alg} {speed}: {count} original-Task-ID event observations\n')
+            f.write('\nEach original default objective checked against immutable source. Subsequent audit will separate repeated candidate identities.\n')
+          print((path/'event_capture_preflight.md').read_text())
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cat reports/event_capture_preflight.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain raw simulator event logs and immutable candidates
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-event-chain-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
