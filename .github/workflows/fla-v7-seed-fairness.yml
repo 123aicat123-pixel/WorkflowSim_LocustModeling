@@ -1,4 +1,4 @@
-name: Fairness test: cost-seeded FLA v7 versus identically seeded NSGA-II
+name: FLA v7 cost seed fairness against seeded NSGA-II
 
 on:
   push:
