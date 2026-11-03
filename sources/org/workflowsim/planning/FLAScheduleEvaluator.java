@@ -83,6 +83,8 @@ public final class FLAScheduleEvaluator {
     /** Explicit experimental alternative, OFF by default; same genotype/VM encoding. */
     private final ReadyQueueScheduleEvaluator readyQueueEvaluator;
     private ReadyQueueScheduleEvaluator.Result lastReadyQueueResult;
+    /** Explicitly selected research-only dual-model objective, OFF by default. */
+    private final DualModelScheduleObjective dualModelObjective;
     /** Optional model parity switch: -Dworkflowsim.planningStageInAware=true */
 
     /** Defaults to validated earliest insertion and no extra PE rejection.
@@ -133,6 +135,14 @@ public final class FLAScheduleEvaluator {
                 ? new StageInAwareScheduleEvaluator(taskOrder,vmList) : null;
         readyQueueEvaluator=Boolean.getBoolean("dagfla.useReadyQueueObjective")
                 ?new ReadyQueueScheduleEvaluator(taskOrder,vmList):null;
+        String dualMode=System.getProperty("dagfla.dualModelMode","off");
+        if(!"off".equals(dualMode) && Boolean.getBoolean("dagfla.useReadyQueueObjective"))
+            throw new IllegalArgumentException("Choose either ready-only or dual-model search objective");
+        if(!"off".equals(dualMode) && stageInAwareEvaluator==null)
+            throw new IllegalArgumentException("Dual-model objective requires planningStageInAware=true");
+        dualModelObjective="off".equals(dualMode)?null:
+                new DualModelScheduleObjective(taskOrder,vmList,
+                        DualModelScheduleObjective.parseMode(dualMode));
     }
 
     public List<Task> getTaskOrder() { return taskOrder; }
@@ -335,6 +345,16 @@ public final class FLAScheduleEvaluator {
     /** Exactly ONE objective evaluation and one detached, mode-consistent timeline. */
     public ScheduleTrace evaluateWithTrace(int[] g) {
         double[] mc=decode(g);
+        if(dualModelObjective!=null) {
+            // The hybrid has no physically valid single task timeline;
+            // use the insertion timeline ONLY as a proxy for local operators.
+            // A method requiring model-consistent timing should not consume it.
+            if(stageInAwareEvaluator==null)
+                throw new IllegalStateException("Dual model missing reference timeline");
+            StageInAwareScheduleEvaluator.Result trace=
+                    stageInAwareEvaluator.evaluate(toAssignment(g));
+            return new ScheduleTrace(mc[0],mc[1],trace.starts,trace.finishes,g);
+        }
         if(readyQueueEvaluator!=null) {
             if(lastReadyQueueResult==null)
                 throw new IllegalStateException("Missing ready-queue timeline");
@@ -373,7 +393,11 @@ public final class FLAScheduleEvaluator {
             cost+=d*vmPrice[v];
             makespan=Math.max(makespan,fin);
         }
-        if(readyQueueEvaluator!=null) {
+        if(dualModelObjective!=null) {
+            double[] robust=dualModelObjective.evaluate(toAssignment(g));
+            makespan=robust[0];
+            cost=robust[1];
+        } else if(readyQueueEvaluator!=null) {
             ReadyQueueScheduleEvaluator.Result corrected=
                     readyQueueEvaluator.evaluate(toAssignment(g));
             lastReadyQueueResult=corrected;
