@@ -74,6 +74,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_PHASE_HV_BANDIT = false;
     /** v13: use DAG fan-in communication-affinity repair as the FLA phase-bandit's third arm. */
     public static boolean CONFIG_JOIN_AWARE_RELOCATION = false;
+    /** v14: pair one normal child with one counted true-timeline-guided or random neighbor. */
+    public static int CONFIG_PAIRED_LOCAL_SEARCH_MODE = 0; // 0=off,1=random control,2=timeline
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -146,7 +148,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
-    private final int edgeRelocationMode, criticalRelocationMode;
+    private final int edgeRelocationMode, criticalRelocationMode, pairedLocalSearchMode;
     private final boolean usePhaseOperatorBandit, usePhaseHvBandit, useJoinAwareRelocation;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
@@ -172,6 +174,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private double alpha1 = 0.85;
     private int doCount, eoCount, ssoCount, edgeChangeCount, criticalChangeCount;
     private int joinRelocationAttempts, joinRelocationChanges;
+    private int localTrials, localChanged, localDominates, localDominated, localIncomparable;
 
     public DAGParetoFLAPlanningAlgorithm() {
         populationSize = CONFIG_POPULATION_SIZE;
@@ -203,6 +206,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         usePhaseOperatorBandit = CONFIG_PHASE_OPERATOR_BANDIT || CONFIG_PHASE_HV_BANDIT;
         usePhaseHvBandit = CONFIG_PHASE_HV_BANDIT;
         useJoinAwareRelocation = CONFIG_JOIN_AWARE_RELOCATION;
+        pairedLocalSearchMode=CONFIG_PAIRED_LOCAL_SEARCH_MODE;
+        if(pairedLocalSearchMode<0 || pairedLocalSearchMode>2)
+            throw new IllegalArgumentException("Unsupported paired local search mode");
         if(useJoinAwareRelocation && !usePhaseHvBandit)
             throw new IllegalArgumentException("v13 join arm requires HV bandit");
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
@@ -212,6 +218,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     @Override
     public void run() {
         lastRun = null;
+        if(pairedLocalSearchMode!=0 && !Boolean.getBoolean("workflowsim.planningStageInAware"))
+            throw new IllegalArgumentException("v14 pair search requires stage-in-aware planning timeline");
         if (populationSize < 4 || generations < 1 || archiveCapacity < 2) {
             throw new IllegalArgumentException("Population >=4, generations >=1, archive capacity >=2 required");
         }
@@ -232,7 +240,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
-        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0 || usePhaseOperatorBandit) prepareResourceHeuristic();
+        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0 || usePhaseOperatorBandit || pairedLocalSearchMode!=0) prepareResourceHeuristic();
         if (criticalRelocationMode != 0 || usePhaseOperatorBandit) prepareCriticalProxy();
         if (edgeRelocationMode != 0 || usePhaseOperatorBandit) prepareDagEdgeRelocation();
         if (!useDag) { Arrays.fill(importance, 1.0); }
@@ -243,7 +251,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
         archive.clear(); searchTrace.clear(); criticalProxyPairs.clear();
         doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0;
-        joinRelocationAttempts=0; joinRelocationChanges=0; alpha1 = 0.85;
+        joinRelocationAttempts=0; joinRelocationChanges=0;
+        localTrials=0;localChanged=0;localDominates=0;localDominated=0;localIncomparable=0;alpha1 = 0.85;
         for(int phase=0;phase<3;phase++) {
             Arrays.fill(banditUses[phase],0);
             Arrays.fill(banditAdmissions[phase],0);
@@ -292,9 +301,41 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             } else {
                 generationVisited = null;
             }
+            FLAScheduleEvaluator.ScheduleTrace precedingTrace=null;
+            Solution precedingNormal=null;
             for (int i = 0; i < populationSize; i++) {
                 Solution current = parents.get(i);
                 boolean isG1 = i < group1Size;
+                final int withinGroupIndex=isG1?i:(i-group1Size);
+                boolean localTrial=pairedLocalSearchMode!=0 && withinGroupIndex%2==1;
+                if(localTrial) {
+                    if(precedingTrace==null || precedingNormal==null)
+                        throw new IllegalStateException("Missing directly preceding v14 normal child");
+                    int[] neighbor=precedingNormal.genes.clone();
+                    int chosenTask=TimelineParetoNeighbor.chooseTask(precedingTrace,allowed,
+                            pairedLocalSearchMode==1,random);
+                    if(chosenTask>=0) {
+                        int alternative=TimelineParetoNeighbor.chooseVm(precedingTrace,neighbor,
+                            chosenTask,allowed[chosenTask],optimisticServiceSeconds[chosenTask],
+                            vmList,isG1,pairedLocalSearchMode==1,random,
+                            taskOrder.get(chosenTask));
+                        neighbor[chosenTask]=alternative;
+                    }
+                    if(chosenTask>=0 && neighbor[chosenTask]==precedingNormal.genes[chosenTask])
+                        throw new IllegalStateException("v14 failed to construct distinct feasible neighbor");
+                    if(useNoveltyRepair)repairNoveltyBeforeEvaluation(neighbor,generationVisited);
+                    Solution trial=new Solution(neighbor,evaluator.evaluate(neighbor));
+                    localTrials++;
+                    if(!Arrays.equals(trial.genes,precedingNormal.genes))localChanged++;
+                    if(dominates(trial,precedingNormal))localDominates++;
+                    else if(dominates(precedingNormal,trial))localDominated++;
+                    else localIncomparable++;
+                    archiveConsider(trial);
+                    (isG1?children1:children2).add(trial);
+                    precedingNormal=null;
+                    precedingTrace=null;
+                    continue;
+                }
                 Solution ref;
                 if (phase == 0) {
                     ref = useCross ? (isG1 ? leader2 : leader1)
@@ -361,7 +402,15 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 // compare to the ONE normal stage-in-aware evaluated result.
                 final double predictedCriticalMakespan = criticalRelocationMode != 0
                         ? approximateMakespan(genes,null) : Double.NaN;
-                Solution child = new Solution(genes, evaluator.evaluate(genes));
+                FLAScheduleEvaluator.ScheduleTrace localTrace=pairedLocalSearchMode!=0
+                        ? evaluator.evaluateWithTrace(genes) : null;
+                Solution child = new Solution(genes,localTrace!=null
+                        ? new double[]{localTrace.makespan,localTrace.cost}
+                        : evaluator.evaluate(genes));
+                if(pairedLocalSearchMode!=0) {
+                    precedingNormal=child;
+                    precedingTrace=localTrace;
+                }
                 if(criticalRelocationMode != 0)
                     criticalProxyPairs.add(new double[]{predictedCriticalMakespan, child.makespan});
                 // Fairness: v12 uses only the SAME child's already evaluated
@@ -496,6 +545,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     "FLA_PHASE_BANDIT usesBaseline=%d usesColocate=%d usesCritical=%d archiveAdmissionsBaseline=%d archiveAdmissionsColocate=%d archiveAdmissionsCritical=%d%n",
                     m.banditArmUses[0],m.banditArmUses[1],m.banditArmUses[2],
                     m.banditArmArchiveAdmissions[0],m.banditArmArchiveAdmissions[1],m.banditArmArchiveAdmissions[2]);
+        if(pairedLocalSearchMode!=0)
+            System.out.printf(java.util.Locale.ROOT,
+                    "FLA_PAIRED_LOCAL mode=%d trials=%d changed=%d dominates=%d dominated=%d incomparable=%d evaluations=%d%n",
+                    pairedLocalSearchMode,localTrials,localChanged,localDominates,localDominated,
+                    localIncomparable,m.objectiveEvaluations);
         if(useJoinAwareRelocation)
             System.out.printf(java.util.Locale.ROOT,
                     "FLA_JOIN_AWARE attempted=%d changed=%d evaluations=%d%n",

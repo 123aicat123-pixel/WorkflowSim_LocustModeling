@@ -79,6 +79,7 @@ public final class FLAScheduleEvaluator {
 
     private long objectiveEvaluations;
     private final StageInAwareScheduleEvaluator stageInAwareEvaluator;
+    private StageInAwareScheduleEvaluator.Result lastStageInResult;
     /** Optional model parity switch: -Dworkflowsim.planningStageInAware=true */
 
     /** Defaults to validated earliest insertion and no extra PE rejection.
@@ -326,10 +327,14 @@ public final class FLAScheduleEvaluator {
         return decode(g);
     }
 
+    /** Exactly ONE objective evaluation and one detached, mode-consistent timeline. */
     public ScheduleTrace evaluateWithTrace(int[] g) {
-        if(stageInAwareEvaluator!=null)
-            throw new IllegalStateException("Legacy interval trace is not valid for stage-in-aware objectives");
-        double[] mc = decode(g);
+        double[] mc=decode(g);
+        if(stageInAwareEvaluator!=null) {
+            if(lastStageInResult==null)throw new IllegalStateException("Missing stage-in-aware timeline");
+            return new ScheduleTrace(mc[0],mc[1],
+                    lastStageInResult.starts,lastStageInResult.finishes,g);
+        }
         return new ScheduleTrace(mc[0],mc[1],currentStarts,taskFinish,g);
     }
 
@@ -360,6 +365,7 @@ public final class FLAScheduleEvaluator {
         if(stageInAwareEvaluator!=null) {
             StageInAwareScheduleEvaluator.Result corrected =
                     stageInAwareEvaluator.evaluate(toAssignment(g));
+            lastStageInResult=corrected;
             makespan=corrected.makespan;
             cost=corrected.cost;
         }

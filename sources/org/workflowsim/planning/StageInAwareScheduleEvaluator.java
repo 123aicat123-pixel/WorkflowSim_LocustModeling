@@ -35,11 +35,16 @@ public final class StageInAwareScheduleEvaluator {
         public final double externalStageInSeconds;
         public final double intermediateStageInSeconds;
         public final int chargedInputs;
+        /** Detached actual stage-in-aware insertion timeline for the evaluated genotype. */
+        public final double[] starts;
+        public final double[] finishes;
 
-        Result(double m,double c,double stage,double ext,double inter,int charged) {
+        Result(double m,double c,double stage,double ext,double inter,int charged,
+                double[] starts,double[] finishes) {
             makespan=m;cost=c;stageInSeconds=stage;
             externalStageInSeconds=ext;intermediateStageInSeconds=inter;
             chargedInputs=charged;
+            this.starts=starts.clone();this.finishes=finishes.clone();
         }
     }
 
@@ -92,6 +97,7 @@ public final class StageInAwareScheduleEvaluator {
         for(int v=0;v<m;v++){calendars.add(new ArrayList<>());cached.add(new HashSet<>());}
         Map<String,Integer> outputVmByFile=new HashMap<>();
         double[] finish=new double[n];
+        double[] startTimes=new double[n];
         double makespan=0,cost=0,totalStage=0,external=0,intermediate=0;
         int charged=0;
         for(int k=0;k<n;k++){
@@ -138,6 +144,7 @@ public final class StageInAwareScheduleEvaluator {
             }
             double end=start+duration;
             slots.add(at,new double[]{start,end});
+            startTimes[k]=start;
             finish[k]=end;
             cost+=duration*dest.getCost();
             makespan=Math.max(makespan,end);
@@ -151,6 +158,6 @@ public final class StageInAwareScheduleEvaluator {
         }
         if(!Double.isFinite(makespan)||!Double.isFinite(cost) || makespan<=0||cost<0)
             throw new IllegalStateException("Non-finite objectives");
-        return new Result(makespan,cost,totalStage,external,intermediate,charged);
+        return new Result(makespan,cost,totalStage,external,intermediate,charged,startTimes,finish);
     }
 }
