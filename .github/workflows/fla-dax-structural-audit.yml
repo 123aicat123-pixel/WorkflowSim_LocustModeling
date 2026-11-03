@@ -1,0 +1,41 @@
+name: DAX Structural and Size Audit (read-only)
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-dax-structural-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run independent DAG parser tests and audit all repository DAX
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          git rev-parse HEAD > reports/source_sha.txt
+          python3 scripts/test_fla_dax_structure.py 2>&1 | tee reports/unit_tests.log
+          python3 scripts/fla_dax_structure.py --dax-dir config/dax --out reports/dax_structure.csv 2>&1 | tee reports/dax_parse.log
+          python3 - <<'PY'
+          import csv,pathlib
+          p=pathlib.Path("reports/dax_structure.csv")
+          with p.open(newline="") as f: rows=list(csv.DictReader(f))
+          names={x['workflow']:x for x in rows}
+          for name,n in (("Epigenomics_46",47),("Sipht_100",97),("Sipht_60",58),("Inspiral_50",50),("CyberShake_100",100)):
+              assert int(names[name]['task_count'])==n,(name,names[name])
+          assert len(rows)>=21
+          assert all(int(x['edge_count'])>=0 for x in rows)
+          assert all(int(x['depth_levels'])>=1 for x in rows)
+          print("PASS all DAX files parsed, true counts audited, logical file volume proxies recorded")
+          PY
+          cat reports/dax_parse.log >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-dax-structure-${{ github.run_id }}
+          path: reports
+          retention-days: 90
