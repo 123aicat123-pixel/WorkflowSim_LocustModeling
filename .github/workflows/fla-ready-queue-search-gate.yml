@@ -1,0 +1,82 @@
+name: FLA Ready-Queue Equal-Budget True-HV Search Gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-ready-queue-search-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fair-two-solver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        workflow: [Sipht_60, Montage_100]
+        seed: [211, 212]
+        decoder: [old, ready]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean Java compile and 4-task oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -name '*.java' -type f | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-oracle.log
+      - name: Run identical-budget FLA v12 and seeded NSGA-II with selected decoder
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ '${{ matrix.decoder }}' == ready ]]; then enabled=true; else enabled=false; fi
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective="$enabled" \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            'reports/research' 'v12-nsga-ready-pair' \
+            > reports/experiment.log 2>&1 || {
+              tail -100 reports/experiment.log
+              exit 1
+            }
+          test -s reports/research_summary.csv
+          test -s reports/research_replays.csv
+          python3 - <<'PY'
+          import csv,math
+          def rows(path):
+              with open(path,newline='') as f:return list(csv.DictReader(f))
+          summary=rows('reports/research_summary.csv')
+          replay=rows('reports/research_replays.csv')
+          assert len(summary)==2,(len(summary),summary)
+          assert len(replay)==32,(len(replay),replay)
+          assert len(set(r['algorithm'] for r in summary))==2
+          assert all(int(s['evaluations'])==3030 for s in summary),summary
+          assert all(int(s['captured_evaluations'])==3030 for s in summary),summary
+          assert all(int(s['replayed'])==16 for s in summary),summary
+          for arm in set(r['algorithm'] for r in summary):
+              z=[r for r in replay if r['algorithm']==arm]
+              assert len(z)==16 and len({r['mapping'] for r in z})==16,arm
+              assert [int(r['candidate_index']) for r in z]==list(range(1,17)),arm
+              for r in z:
+                  for key in ('sim_makespan','sim_cost','planned_makespan','planned_cost'):
+                      v=float(r[key]);assert math.isfinite(v) and v>0,(arm,key,v)
+          print('PASS 2 algorithms x 3030 counted and captured objective evaluations, same K16 simulator replay budgets, unique assignments')
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          printf 'DAG=%s seed=%s decoder=%s\n' '${{ matrix.workflow }}' '${{ matrix.seed }}' '${{ matrix.decoder }}' > reports/block-id.txt
+          cp docs/FLA_READY_QUEUE_SEARCH_FIRST_GATE_PROTOCOL_2026-11-03.md reports/frozen-protocol.md
+      - name: Preserve full raw search and true simulator results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-ready-search-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ matrix.decoder }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
