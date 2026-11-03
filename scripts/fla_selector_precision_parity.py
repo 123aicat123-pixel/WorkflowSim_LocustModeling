@@ -46,27 +46,30 @@ def verify(fixture, output):
                 oracle.Planned("1:" + row["id"], float(row["m"]), float(row["c"])))
     observed = {}
     for line in output.read_text().splitlines():
-        if not line.startswith("PARITY|"):
+        if not (line.startswith("PARITY|") or line.startswith("PARITYSWEEP|")):
             continue
-        _, case, count, ordered = line.split("|", 3)
-        key = (case, int(count))
+        family, case, count, ordered = line.split("|", 3)
+        policy = {"PARITY":"pareto-cover","PARITYSWEEP":"scalar-sweep"}[family]
+        key = (case, int(count), policy)
         assert key not in observed, key
         observed[key] = ordered.split(",")
-    expected_keys = {(case, k) for case in bycase for k in (8, 16, 24, 32)}
+    expected_keys = {(case, k, policy) for case in bycase
+                     for k in (8, 16, 24, 32)
+                     for policy in ("pareto-cover", "scalar-sweep")}
     assert set(observed) == expected_keys, (set(observed), expected_keys)
     diffs = []
-    for (case, k), actual in sorted(observed.items()):
-        selected = oracle.choose(bycase[case], ("fixture", 1, case), "pareto-cover", k, 0)
+    for (case, k, policy), actual in sorted(observed.items()):
+        selected = oracle.choose(bycase[case], ("fixture", 1, case), policy, k, 0)
         expected = [str(int(x.mapping.split(":")[1])) for x in selected]
         if expected != actual:
-            diffs.append((case, k, expected, actual))
+            diffs.append((case, k, policy, expected, actual))
     if diffs:
         print("FAIL Python-Java selection order differs in", len(diffs), "case/budget configurations")
-        for case, k, expected, actual in diffs:
-            print("MISMATCH", case, k, "python=", expected, "java=", actual)
+        for case, k, policy, expected, actual in diffs:
+            print("MISMATCH", case, k, policy, "python=", expected, "java=", actual)
         raise SystemExit(1)
     print("PASS Python and Java exact selected-genotype ID/order parity:",
-          len(observed), "configurations over", sum(len(a) for a in bycase.values()), "fixtures")
+          len(observed), "policy/fixture/budget configurations across", len(bycase), "fixtures")
 
 if __name__ == "__main__":
     assert len(sys.argv) >= 3 and sys.argv[1] in ("generate", "verify"), (
