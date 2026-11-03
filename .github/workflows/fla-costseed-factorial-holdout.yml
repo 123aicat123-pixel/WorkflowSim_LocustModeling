@@ -1,0 +1,179 @@
+name: Held-out 2x2 cost seed and optimizer factorial across Epigenomics and Inspiral
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-costseed-factorial-holdout.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pair:
+    name: Factorial ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_100, Inspiral_100]
+        seed: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build current research sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/build.log
+      - name: Search four factorial groups with identical evaluator/budget and replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            'Output&Results/factorial_${{ matrix.workflow }}_s${{ matrix.seed }}' costseed-factorial \
+            2>&1 | tee ci-logs/factorial.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/factorial.log
+      - name: Assert four groups, exact budgets, individual replay consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math
+          pre='factorialholdout_${{ matrix.workflow }}_s${{ matrix.seed }}'
+          root=pathlib.Path('Output&Results')
+          with (root/(pre+'_summary.csv')).open(newline='') as f:rows=list(csv.DictReader(f))
+          with (root/(pre+'_replays.csv')).open(newline='') as f:replays=list(csv.DictReader(f))
+          algs={'DAG-Pareto-FLA[v6-pop]','DAG-Pareto-FLA[v7-costseed]','NSGA-II','NSGA-II[costseed]'}
+          assert len(rows)==4 and {r['algorithm'] for r in rows}==algs,rows
+          assert all(int(r['evaluations'])==int(r['captured_evaluations'])==3030 for r in rows),rows
+          assert len(replays)==sum(int(r['replayed']) for r in rows)
+          assert {r['algorithm'] for r in replays}==algs
+          for r in replays:
+              assert math.isfinite(float(r['sim_makespan'])) and float(r['sim_makespan'])>0
+              assert math.isfinite(float(r['sim_cost'])) and float(r['sim_cost'])>0
+              for target in ('makespan','cost'):
+                  a=float(r['planned_'+target]);b=float(r['independent_planned_'+target])
+                  assert abs(a-b)<=1e-6*max(1.0,abs(b)),r
+          print('PASS 2x2 factorial with complete captured fitness and exact scheduler replay')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: factorialholdout-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/factorial_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+          retention-days: 90
+          if-no-files-found: warn
+  aggregate:
+    name: Four-arm frozen simulator HV and interaction effects
+    needs: pair
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: factorialholdout-*-${{ github.run_id }}
+          path: inputs
+          merge-multiple: false
+      - name: Estimate cost-seed effects within each optimizer on identical frozen references
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,collections,statistics,math
+          files=list(pathlib.Path('inputs').rglob('*_replays.csv'))
+          sums=list(pathlib.Path('inputs').rglob('*_summary.csv'))
+          assert len(files)==len(sums)==6,(len(files),len(sums))
+          records=collections.defaultdict(list)
+          workflows=('Epigenomics_100','Inspiral_100')
+          algs=('DAG-Pareto-FLA[v6-pop]','DAG-Pareto-FLA[v7-costseed]','NSGA-II','NSGA-II[costseed]')
+          for f in files:
+              with f.open(newline='') as inp:
+                  rows=list(csv.DictReader(inp))
+              assert rows
+              for r in rows:
+                  wf,alg,seed=r['workflow'],r['algorithm'],int(r['seed'])
+                  assert wf in workflows and alg in algs and seed in (1,2,3)
+                  m,c=float(r['sim_makespan']),float(r['sim_cost'])
+                  assert math.isfinite(m) and math.isfinite(c) and m>0 and c>0
+                  records[(wf,seed,alg)].append((m,c))
+          assert len(records)==24
+          for f in sums:
+              with f.open(newline='') as inp:
+                  rows=list(csv.DictReader(inp))
+              assert len(rows)==4
+              assert all(int(x['evaluations'])==int(x['captured_evaluations'])==3030 for x in rows)
+          def nd(points):
+              unique=sorted(set(points))
+              return [x for x in unique if not any(y!=x and y[0]<=x[0] and y[1]<=x[1] for y in unique)]
+          def hv(points,ref):
+              total=0.0;prev=ref[1]
+              for m,c in nd(points):
+                  if m>=ref[0] or c>=ref[1]:continue
+                  if c<prev:
+                      total+=(ref[0]-m)*(prev-c);prev=c
+              return total
+          refs={}
+          for wf in workflows:
+              pts=[p for (w,seed,alg),arr in records.items() if w==wf for p in arr]
+              refs[wf]=(1.05*max(x for x,y in pts)+1,1.05*max(y for x,y in pts)+1)
+          vals={(wf,seed,alg):hv(pts,refs[wf]) for (wf,seed,alg),pts in records.items()}
+          report=['# Two-by-two cost seeding / optimizer factorial on real WorkflowSim objectives',
+                  '',
+                  'Four arms, 3030 actual planning evaluations each; no extra objective budget or warm starts except the two disclosed common low-cost proposals.',
+                  'Within every DAG family all four arms and all seeds share ONE simulator HV reference. Fully identical first TWO initialization assignments are independently asserted for the seeded pair.',
+                  'The four-arm contrast changes **initialization** and **optimizer** separately; this is a restricted empirical factorial, not a proof of causal orthogonality for later random search.',
+                  'Each replay set is screened by planning nondominance, not a complete simulator Pareto front.',
+                  '',
+                  '| Workflow | Mean FLA v6 HV | Mean FLA v7 HV | Mean NSGA-II HV | Mean NSGA-II seeded HV |',
+                  '|---|---:|---:|---:|---:|']
+          for wf in workflows:
+              mean=lambda a:statistics.mean(vals[(wf,seed,a)] for seed in (1,2,3))
+              report.append(f'| {wf} | {mean(algs[0]):.4f} | {mean(algs[1]):.4f} | {mean(algs[2]):.4f} | {mean(algs[3]):.4f} |')
+          report+=['','## Matched relative effects, percent','',
+                   '| DAG | FLA seed benefit (v7 vs v6) | NSGA seed benefit | Seeded FLA vs seeded NSGA-II | Difference-of-benefits (pp) |',
+                   '|---|---:|---:|---:|---:|']
+          allpairs=[]
+          for wf in workflows:
+              pairs=[]
+              for seed in (1,2,3):
+                  fv6,fv7,n0,n1=[vals[(wf,seed,a)] for a in algs]
+                  df=100*(fv7/fv6-1)
+                  dn=100*(n1/n0-1)
+                  fair=100*(fv7/n1-1)
+                  pairs.append((df,dn,fair,df-dn))
+                  allpairs.append((df,dn,fair,df-dn))
+              means=[statistics.mean(x[k] for x in pairs) for k in range(4)]
+              report.append(f'| {wf} | {means[0]:+.3f}% | {means[1]:+.3f}% | {means[2]:+.3f}% | {means[3]:+.3f} |')
+          means=[statistics.mean(x[k] for x in allpairs) for k in range(4)]
+          report.append(f'| **ALL 6 pairs** | **{means[0]:+.3f}%** | **{means[1]:+.3f}%** | **{means[2]:+.3f}%** | **{means[3]:+.3f}** |')
+          report+=['','## Limits',
+                    'Two workflow families held out from this 2x2 factorial development pilot, three seeds each; the families have been studied previously in other experiments. Do not treat this as independent publication confirmation.',
+                    'Initialization modifies the later search trajectories; the difference-of-benefits compares percentage gains, not an additive factorial ANOVA effect.',
+                    'The original unseeded NSGA-II remains available and unmodified by default.']
+          with pathlib.Path('reports/factorial_hv.csv').open('w',newline='') as f:
+              w=csv.writer(f);w.writerow(['workflow','seed','algorithm','sim_hv','ref_m','ref_c','replayed'])
+              for (wf,seed,alg),h in sorted(vals.items()):
+                  w.writerow([wf,seed,alg,h,*refs[wf],len(records[(wf,seed,alg)])])
+          pathlib.Path('reports/factorial_report.md').write_text('\n'.join(report)+'\n')
+          print('\n'.join(report))
+          PY
+          cat reports/factorial_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: factorialholdout-aggregate-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
