@@ -520,3 +520,27 @@ This is a **mechanism diagnostic**, not a claim that v10 causally failed solely 
 [Full post-search cost/time counterfactual, all six matrices, exact search-budget assertions and raw aggregate](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41569397876).
 
 **Next methodological choice:** If a true StageIn-aware Pareto local search is tested, EVERY candidate objective evaluation used by that search must be charged to the same total fitness budget as a seeded NSGA-II comparator; otherwise its apparent gain would simply be extra optimization work. Alternatively, a cheap cost-and-time multiobjective surrogate must be calibrated for *local dominance preservation*, not merely global objective correlation. Avoid further unvalidated one-objective mutation stacking.
+
+
+## V11 phase-aware operator UCB: development rejection (2026-11-03)
+
+To test whether an FLA-specific **online operator selector** can do better than fixed mutation probabilities, the v11-bandit variant used a separate three-arm upper-confidence-bound controller within each DO, EO and SSO stage. The arms were baseline FLA, DAG parent-child co-location, and cheap critical task relocation. The controller updates its credit after **one normal stage-in-aware objective evaluation** per offspring, based on **admission to the planned Pareto archive**. It uses **zero extra objective fitness calls**, and is neither an original FLA equation nor a simulator-level reward.
+
+The dedicated activation regression confirmed all three operators were actually used, all archive-admission counts were bounded by uses, and each 30×100 optimization had exactly **3030 search evaluations**. The complete experiment compared v11 against unchanged v7-costseed, static v9-colocate, and static v10-critical on CyberShake_100, Montage_100, Sipht_100 × 3 paired seeds, all with one fixed simulated-HV reference per family and independent WorkflowSim replay of planned nondominated assignments.
+
+| 100-task DAG | v11 compared with v7-costseed: mean paired simulated HV difference |
+|---|---:|
+| CyberShake_100 | −0.608% |
+| Montage_100 | +3.384% |
+| Sipht_100 | −5.070% |
+| **All nine development cases** | **−0.765%, 4/9 better** |
+
+The static operators in the same rerun yielded v9-colocate **+0.760%** (5/9 wins) and v10-critical **−1.735%** (3/9 wins), versus the unchanged v7 control. As previously demonstrated in v9's extra-family validation, a positive development average is NOT sufficient for independent superiority.
+
+V11 successfully adapted its operator frequencies by DAG and FLA phase. For example, across different Montage seeds co-location received 999–1946 out of 3000 child attempts, whereas CyberShake often favored baseline FLA or critical relocation. But a high **planning archive admission rate is not equivalent to increased simulated hypervolume**; the online policy failed to improve pooled simulator HV over v7 despite demonstrably active feedback. Thus **V11 is REJECTED** as a recommended replacement and remains a default-OFF research ablation.
+
+[Complete v11 corrected 9-case experimental matrix, bandit activation counts, full WorkflowSim replay CSV, shared-reference HV report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41570134721) · [Independent budget-neutral activation regression](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41569951169).
+
+The earlier v11 pilot attempt [41570077328](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41570077328) failed its expected bandit-statistics assertion, whereas the corrected rerun above passed and produced an aggregated report. Do not confuse the two run outcomes.
+
+**Research implication:** Prefer diagnostics of *local* multiobjective benefit and simulation-aligned reward, with every additional true objective evaluation explicitly charged to the same budget as equally initialized NSGA-II. Continued testing of arbitrary new operators without an untouched validation family is likely to overfit the five frequently reused DAG families. At present v7-costseed is still a candidate, not a demonstrated stronger FLA-specific optimizer.
