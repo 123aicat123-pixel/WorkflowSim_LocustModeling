@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Run independent DAG parser tests and audit all repository DAX (invalid sizes diagnosed)
+      - name: Run independent DAG parser tests and audit all repository DAX (invalid runtimes suppressed)
         shell: bash
         run: |
           set -euo pipefail
