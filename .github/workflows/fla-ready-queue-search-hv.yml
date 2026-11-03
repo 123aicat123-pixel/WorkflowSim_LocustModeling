@@ -1,0 +1,41 @@
+name: Read-only FLA Ready-Queue Search True-HV Common Reference
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-ready-queue-search-hv.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  common-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download eight original immutable full optimizer/simulator blocks
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41670356422
+          github-token: ${{ github.token }}
+          pattern: fla-ready-search-*-41670356422
+          path: original
+      - name: Recompute four-cell shared-reference HV from true simulator K16
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_ready_queue_search_hv_audit.py
+          python3 scripts/fla_ready_queue_search_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-source-sha.txt
+          echo 'Original real 8-search-block run: 41670356422' > reports/original-run-id.txt
+          cat reports/paired_true_hv_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive paired positive and negative results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-ready-search-true-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
