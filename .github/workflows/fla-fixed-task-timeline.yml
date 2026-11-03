@@ -70,11 +70,10 @@ jobs:
                 for r in group:
                   assert int(r['vm_id'])==pairs[int(r['task_id'])]
                   for key in ('planned_start','planned_finish','actual_start','actual_finish',
-                    'actual_cpu_time','nominal_compute_seconds','cpu_minus_compute_seconds','start_error','finish_error'):
+                    'actual_cpu_time','nominal_compute_seconds','cpu_minus_nominal_compute_signed_seconds','start_error','finish_error'):
                     assert math.isfinite(float(r[key])),(key,r)
                   assert float(r['planned_finish'])>=float(r['planned_start'])
                   assert float(r['actual_finish'])>=float(r['actual_start'])
-                  assert float(r['cpu_minus_compute_seconds'])>=-1e-5
               all_rows+=task
           assert len(all_rows)>0
           w=csv.DictWriter((root/'all_task_timelines.csv').open('w',newline=''),fieldnames=list(all_rows[0]))
@@ -94,8 +93,8 @@ jobs:
               f.write(f"| {alg} | {speed} | {len(rows)} | {statistics.mean(abs(float(r['finish_error'])) for r in rows):.6f} | {max(abs(float(r['finish_error'])) for r in rows):.6f} | {statistics.mean(abs(float(r['start_error'])) for r in rows):.6f} |\n")
             f.write('\n## Largest task-level absolute finish mismatches\n\n')
             for r in sorted(all_rows,key=lambda r:-abs(float(r['finish_error'])))[:8]:
-              f.write(f"- {r['algorithm']} {r['speed']} candidate={r['candidate_index']} task={r['task_id']} VM={r['vm_id']} finish error={float(r['finish_error']):+.6f}s, start error={float(r['start_error']):+.6f}s, CPU-minus-compute proxy={float(r['cpu_minus_compute_seconds']):.6f}s\n")
-            f.write('\nNot a causal proof of stage-in or queueing; job start/finish and CPU residual are observational. Default metrics rechecked against archived original true simulator results.\n')
+              f.write(f"- {r['algorithm']} {r['speed']} candidate={r['candidate_index']} task={r['task_id']} VM={r['vm_id']} finish error={float(r['finish_error']):+.6f}s, start error={float(r['start_error']):+.6f}s, signed CPU-minus-nominal-compute accounting delta={float(r['cpu_minus_nominal_compute_signed_seconds']):.6f}s\n")
+            f.write('\nNot a causal proof of stage-in or queueing; job start/finish and SIGNED CPU accounting residual are observational; negative values are not treated as physical negative stage-in. Default metrics rechecked against archived original true simulator results.\n')
           print((root/'task_timeline_report.md').read_text())
           PY
           git rev-parse HEAD > reports/source-sha.txt
