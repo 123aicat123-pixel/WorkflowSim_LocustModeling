@@ -1,0 +1,47 @@
+name: Read-only 1024 Real WorkflowSim Pareto Rank Fidelity Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-pareto-rank-fidelity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-real-rank-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 22
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve all 40 original full-budget/restart source jobs and 768 real simulations
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41689142588
+          github-token: ${{ github.token }}
+          pattern: fla-priority-restart-*-41689142588
+          path: restart
+      - name: Retrieve all four original v19 source jobs and 256 real simulations
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41690669415
+          github-token: ${{ github.token }}
+          pattern: fla-v19-queue-risk-*-41690669415
+          path: v19
+      - name: Audit every original K-selected real pair's predicted vs simulator Pareto decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_pareto_rank_fidelity_retrospective.py
+          python3 scripts/fla_pareto_rank_fidelity_retrospective.py restart v19 reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          echo 'Immutable original actual WorkflowSim Actions 41689142588 (768), 41690669415 (256)' > reports/original-provenance.txt
+          cat reports/pareto_rank_fidelity_retrospective_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all 96 arm rank results and all wrong-dominance individual task-to-VM pairs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-1024-pareto-rank-actual-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
