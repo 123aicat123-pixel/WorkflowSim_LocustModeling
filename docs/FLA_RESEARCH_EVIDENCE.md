@@ -591,3 +591,48 @@ Real WorkflowSim simulations replayed the recorded planned-nondominated candidat
 **Interpretation:** v12 shows a positive *variant-held-out* mean improvement compared with v7, and a small positive mean compared with identically initialized NSGA-II. This is a **promising but statistically weak 6-case result**. These two DAG families were already used in earlier research; no truly untouched publication validation exists. The Inspiral seed wins are mixed; this should NOT be reported as significant or broad FLA superiority.
 
 An expanded five-family, five-seed, three-arm same-initialization confirmation has been triggered in workflow `fla-v12-full-fairness.yml`. Its result and sampling limitations must be checked before making a stronger claim. Note that v12's UCB reward is derived from the PLANNING Pareto archive, not actual WorkflowSim feedback during optimization. Recorded fronts remain planned-nondominated replays, not all evaluated-schedule simulator Pareto fronts.
+
+
+## V12 full five-family matched-seed confirmation and family-level uncertainty (2026-11-03)
+
+Following the v12 continuous planned-Pareto-HV reward UCB development result (+1.433% vs v7 over 9 cases) and extra-family validation (+3.222% vs v7, +1.856% vs equally cost-seeded NSGA-II over 6 cases), an expanded experiment **re-ran all three algorithms together** under one shared frozen simulator-HV reference per workflow family across all five seeds and all three variants. The three arms were DAG-Pareto-FLA[v7-costseed], DAG-Pareto-FLA[v12-hvbandit], and NSGA-II[costseed].
+
+All **25 matrices × three arms = 75 optimizer trials** passed actual WorkflowSim search and independent replay. Each arm used **3030 true objective-search evaluations**, and both FLA variants had the **same two initial low-cost task assignments** as cost-seeded NSGA-II, verified by assignment-level assertions. The v12 operator controller's reward is an increment in the PLANNING Pareto archive HV calculated from already-evaluated makespan and cost. It does **not** train using real simulator feedback and introduces zero additional true fitness evaluations.
+
+| Workflow (100 tasks) | Mean paired v12 vs v7 costseed | Mean paired v12 vs NSGA-II costseed |
+|---|---:|---:|
+| CyberShake_100 | −0.715% (1/5 wins) | −1.895% (1/5 wins) |
+| Epigenomics_100 | +5.085% (5/5) | +3.461% (5/5) |
+| Inspiral_100 | +1.506% (4/5) | −1.403% (1/5) |
+| Montage_100 | +4.149% (4/5) | +5.622% (5/5) |
+| Sipht_100 | +0.654% (3/5) | +1.118% (4/5) |
+| **ALL 25** | **+2.136% (17/25 wins)** | **+1.380% (16/25 wins)** |
+
+[Full 25-case × three-arm actual simulation source SHA, seed equivalence and 75 replay CSVs](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41572425682).
+
+The positive pooled v12 versus identically initialized NSGA-II mean is a **promising DESCRIPTIVE improvement**, not evidence of a generally superior optimizer. It is negative for CyberShake and Inspiral, so the gain does not transfer uniformly even within the familiar five workflow families.
+
+**Post-hoc reference-point sensitivity on the same immutable replay data** with one common multiplier per workflow and all three variants/seeds:
+
+| Multiplier of worst-observed makespan and cost (+1) | v12 vs identically seeded NSGA-II paired HV | v12 vs v7 paired HV |
+|---|---:|---:|
+| 1.02 | +1.848% | +2.141% |
+| 1.05 (primary) | +1.380% | +2.136% |
+| 1.10 | +0.942% | +2.082% |
+| 1.20 | +0.539% | +1.928% |
+| 1.50 | +0.187% | +1.517% |
+
+The v12 advantage has the same sign over these tested references, but its magnitude versus equally seeded NSGA-II approaches zero at a more generous reference, and positive sign alone does not confer inferential significance.
+
+**Exploratory family-block uncertainty**: resample FIVE workflow-family paired means with replacement for a percentile 95% bootstrap interval and enumerate all 2^5 equally likely sign flips of the family effects. This accounts for seeds being correlated within the same workflow family but has very coarse inferential resolution:
+
+| v12 vs comparator | Mean paired HV | 95% family-block bootstrap interval | Two-sided family sign-flip p |
+|---|---:|---:|---:|
+| NSGA-II[costseed] | +1.380% | **[−1.096%, +3.857%]** | **0.4375** |
+| DAG-Pareto-FLA[v7-costseed] | +2.136% | [+0.277%, +3.995%] | **0.1875** |
+
+Thus **neither paired contrast has established statistical significance under the five-family sign-flip test**. The sample remains *post-development*: the same five families have been studied and variants have been tuned over many experiments. The bootstrap interval for v12 versus v7 excludes zero in this particular exploratory method but the sign-flip test does not; do NOT suppress this difference, or choose the inferential method solely for publication advantage.
+
+[Immutable source replay, full five-reference-point recalculation, per-seed CSV, exact family sign-flip and deterministic bootstrap report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41573075236).
+
+**Research decision:** v12-hvbandit is the current best *hypothesis candidate* worth further cross-size/cross-environment testing. It is not a default-on algorithm and has not demonstrated a statistically robust, general or Q1-publication-level search advantage over fair seeded NSGA-II. The comparison only replays candidates selected as non-dominated under planning objectives; complete simulator nondominated fronts of ALL evaluated genotypes are not yet assessed at the 3030-evaluation level.
