@@ -111,6 +111,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public int group2Size;
         public int edgeRelocationChanges;
         public int criticalRelocationChanges;
+        public int disagreementProposals;
+        public int disagreementMoves;
         public int criticalProxySamples;
         public double criticalProxyPearson;
         public double criticalProxyMedianAbsolutePctError;
@@ -576,6 +578,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.group2Size = group2.size();
         m.edgeRelocationChanges = edgeChangeCount;
         m.criticalRelocationChanges = criticalChangeCount;
+        m.disagreementProposals=disagreementProposals;
+        m.disagreementMoves=disagreementMoves;
+        if(useDisagreementRelocation && disagreementProposals==0)
+            throw new IllegalStateException("v18 active but no disagreement relocation proposals");
         if(usePhaseOperatorBandit) {
             m.banditArmUses=new int[3];
             m.banditArmArchiveAdmissions=new int[3];
@@ -611,6 +617,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         lastRun = m;
         if(CONFIG_CRITICAL_LOCAL_AUDIT && criticalRelocationMode!=0)
             runCriticalLocalAudit();
+        if(useDisagreementRelocation)
+            System.out.printf("V18_DISAGREEMENT proposals=%d actualRelocations=%d%n",
+                    disagreementProposals,disagreementMoves);
         System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d criticalRelocationChanges=%d%n",
                 m.paretoFrontSize,m.chosenMakespan,m.chosenCost,m.objectiveEvaluations,
                 m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges,m.criticalRelocationChanges);
