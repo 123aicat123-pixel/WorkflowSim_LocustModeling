@@ -75,7 +75,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     /** v13: use DAG fan-in communication-affinity repair as the FLA phase-bandit's third arm. */
     public static boolean CONFIG_JOIN_AWARE_RELOCATION = false;
     /** v14: pair one normal child with one counted true-timeline-guided or random neighbor. */
-    public static int CONFIG_PAIRED_LOCAL_SEARCH_MODE = 0; // 0=off,1=random control,2=timeline
+    public static int CONFIG_PAIRED_LOCAL_SEARCH_MODE = 0; // 0=off,1=random control,2=timeline,3=random sham,4=timeline sham
     /** v15: replace strictly dominated local trial in survivor pool with its normal child. */
     public static boolean CONFIG_PARETO_GATED_LOCAL_SURVIVOR = false;
     /** Passive per-generation selected-population diagnostics, OFF by default. */
@@ -220,7 +220,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         collectPopulationDiagnostics=CONFIG_POPULATION_DIAGNOSTICS;
         if(paretoGatedLocalSurvivor && pairedLocalSearchMode==0)
             throw new IllegalArgumentException("Pareto local gate requires paired local trials");
-        if(pairedLocalSearchMode<0 || pairedLocalSearchMode>2)
+        if(pairedLocalSearchMode<0 || pairedLocalSearchMode>4)
             throw new IllegalArgumentException("Unsupported paired local search mode");
         if(useJoinAwareRelocation && !usePhaseHvBandit)
             throw new IllegalArgumentException("v13 join arm requires HV bandit");
@@ -331,21 +331,32 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     if(precedingTrace==null || precedingNormal==null)
                         throw new IllegalStateException("Missing directly preceding v14 normal child");
                     int[] neighbor=precedingNormal.genes.clone();
+                    boolean randomNeighbor=pairedLocalSearchMode==1 || pairedLocalSearchMode==3;
+                    boolean sham=pairedLocalSearchMode>=3;
                     int chosenTask=TimelineParetoNeighbor.chooseTask(precedingTrace,allowed,
-                            pairedLocalSearchMode==1,random);
+                            randomNeighbor,random);
                     if(chosenTask>=0) {
                         int alternative=TimelineParetoNeighbor.chooseVm(precedingTrace,neighbor,
                             chosenTask,allowed[chosenTask],optimisticServiceSeconds[chosenTask],
-                            vmList,isG1,pairedLocalSearchMode==1,random,
+                            vmList,isG1,randomNeighbor,random,
                             taskOrder);
                         neighbor[chosenTask]=alternative;
                     }
                     if(chosenTask>=0 && neighbor[chosenTask]==precedingNormal.genes[chosenTask])
                         throw new IllegalStateException("v14 failed to construct distinct feasible neighbor");
+                    // Sham consumes exactly the SAME proposal RNG path and the
+                    // SAME one counted objective evaluation as the active pair,
+                    // but evaluates the existing normal child a second time.
+                    // This intentionally adds no new search information: it is
+                    // the negative control for losing 14 FLA-bandit opportunities.
                     if(useNoveltyRepair)repairNoveltyBeforeEvaluation(neighbor,generationVisited);
-                    Solution trial=new Solution(neighbor,evaluator.evaluate(neighbor));
+                    final int[] trialGenes=sham?precedingNormal.genes:neighbor;
+                    Solution trial=new Solution(trialGenes,evaluator.evaluate(trialGenes));
                     localTrials++;
                     if(!Arrays.equals(trial.genes,precedingNormal.genes))localChanged++;
+                    if(sham && (trial.makespan!=precedingNormal.makespan ||
+                                 trial.cost!=precedingNormal.cost))
+                        throw new IllegalStateException("Sham duplicate evaluation not deterministic");
                     if(dominates(trial,precedingNormal))localDominates++;
                     else if(dominates(precedingNormal,trial))localDominated++;
                     else localIncomparable++;

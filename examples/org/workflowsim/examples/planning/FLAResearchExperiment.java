@@ -201,6 +201,18 @@ public final class FLAResearchExperiment {
                 for(Run arm:Arrays.asList(v12,v14random,v14timeline,v15random,v15timeline))
                     assertCostSeedIdentity(arm,nsga);
                 runs.addAll(Arrays.asList(v12,v14random,v14timeline,v15random,v15timeline,nsga));
+            } else if ("bandit-opportunity-sixarm".equals(args[5])) {
+                if(!Boolean.getBoolean("dagfla.populationDiagnostics"))
+                    throw new IllegalArgumentException("Phase population diagnostics required for opportunity mechanism experiment");
+                Run v12=runDag(dax,seed,pop,gens,"v12-hvbandit");
+                Run shamRandom=runDag(dax,seed,pop,gens,"v16-shamrandom");
+                Run activeRandom=runDag(dax,seed,pop,gens,"v14-randompair");
+                Run shamTimeline=runDag(dax,seed,pop,gens,"v16-shamtimeline");
+                Run activeTimeline=runDag(dax,seed,pop,gens,"v14-timelinepair");
+                Run nsga=runNsga(dax,seed,pop,gens,true);
+                for(Run arm:Arrays.asList(v12,shamRandom,activeRandom,shamTimeline,activeTimeline))
+                    assertCostSeedIdentity(arm,nsga);
+                runs.addAll(Arrays.asList(v12,shamRandom,activeRandom,shamTimeline,activeTimeline,nsga));
             } else if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, false));
             } else if ("nsga-costseed".equals(args[5])) {
@@ -433,7 +445,8 @@ public final class FLAResearchExperiment {
                 "v9-colocate","v9-separate","v9-adaptive",
                 "v10-critical","v10-guarded","v11-bandit","v12-hvbandit","v13-join",
                 "v14-randompair","v14-timelinepair",
-                "v15-randomgate","v15-timelinegate");
+                "v15-randomgate","v15-timelinegate",
+                "v16-shamrandom","v16-shamtimeline");
         if (!supported.contains(variant)) throw new IllegalArgumentException("Unknown ablation: " + variant);
         final boolean minimal="minimal".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_DAG_GUIDANCE = !minimal && !"no-dag".equals(variant);
@@ -441,26 +454,26 @@ public final class FLAResearchExperiment {
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_SSO = !minimal && !"no-archive-sso".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_MUTATION = !minimal && !"no-adaptive-mutation".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = !minimal && !"no-adaptive-preference".equals(variant);
-        boolean isV2=variant.startsWith("v2") || variant.startsWith("v3") || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15")));
+        boolean isV2=variant.startsWith("v2") || variant.startsWith("v3") || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15") || variant.startsWith("v16")));
         if(isV2) DAGParetoFLAPlanningAlgorithm.CONFIG_CROSS_GROUP_DO=false;
         DAGParetoFLAPlanningAlgorithm.CONFIG_RESOURCE_AWARE_MUTATION =
                 "v3-resource".equals(variant) || "v3-both".equals(variant)
                 || "v4-crowding-resource".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_RECOMBINATION =
                 "v3-archive".equals(variant) || "v3-both".equals(variant) || variant.startsWith("v4")
-                || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15")));
+                || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15") || variant.startsWith("v16")));
         DAGParetoFLAPlanningAlgorithm.CONFIG_PARETO_CROWDING_SELECTION = variant.startsWith("v4");
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_DAG_BLOCK =
                 "v5-dagblock".equals(variant) || "v5-both".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_PREFERENCE_DONOR =
                 "v5-donor".equals(variant) || "v5-both".equals(variant);
-        DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_REPAIR = variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15")));
+        DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_REPAIR = variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15") || variant.startsWith("v16")));
         DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_GLOBAL_HISTORY =
                 "v6-global".equals(variant) || "v6-strong".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_STRONG_REPAIR =
                 "v6-strong".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_COST_SEEDING =
-                "v7-costseed".equals(variant) || "v7-both".equals(variant) || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15")));
+                "v7-costseed".equals(variant) || "v7-both".equals(variant) || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15") || variant.startsWith("v16")));
         DAGParetoFLAPlanningAlgorithm.CONFIG_COST_EXTREME_GUIDANCE =
                 "v7-extreme".equals(variant) || "v7-both".equals(variant) || "v8-dual-guide".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_CRITICAL_LOCAL_AUDIT =
@@ -469,12 +482,14 @@ public final class FLAResearchExperiment {
                 "v11-bandit".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_PHASE_HV_BANDIT =
                 "v12-hvbandit".equals(variant) || "v13-join".equals(variant)
-                || (variant.startsWith("v14") || variant.startsWith("v15"));
+                || (variant.startsWith("v14") || variant.startsWith("v15") || variant.startsWith("v16"));
         DAGParetoFLAPlanningAlgorithm.CONFIG_JOIN_AWARE_RELOCATION =
                 "v13-join".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_PAIRED_LOCAL_SEARCH_MODE =
                 ("v14-randompair".equals(variant) || "v15-randomgate".equals(variant))?1:
-                ("v14-timelinepair".equals(variant) || "v15-timelinegate".equals(variant))?2:0;
+                ("v14-timelinepair".equals(variant) || "v15-timelinegate".equals(variant))?2:
+                "v16-shamrandom".equals(variant)?3:
+                "v16-shamtimeline".equals(variant)?4:0;
         DAGParetoFLAPlanningAlgorithm.CONFIG_PARETO_GATED_LOCAL_SURVIVOR=
                 variant.startsWith("v15");
         DAGParetoFLAPlanningAlgorithm.CONFIG_POPULATION_DIAGNOSTICS=
@@ -489,7 +504,7 @@ public final class FLAResearchExperiment {
                 "v8-dual".equals(variant) || "v8-dual-guide".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_GLOBAL_SURVIVOR_SELECTION =
                 "v2-global".equals(variant) || "v2".equals(variant) || variant.startsWith("v3")
-                || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15")));
+                || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10") || variant.startsWith("v11") || (variant.startsWith("v12") || variant.startsWith("v13") || (variant.startsWith("v14") || variant.startsWith("v15") || variant.startsWith("v16")));
         DAGParetoFLAPlanningAlgorithm.CONFIG_RANDOM_IMMIGRANTS =
                 "v2-immigrants".equals(variant) || "v2".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
