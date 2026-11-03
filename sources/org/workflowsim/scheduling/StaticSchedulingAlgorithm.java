@@ -56,6 +56,7 @@ public class StaticSchedulingAlgorithm extends BaseSchedulingAlgorithm {
         // Never mutate the pending list; the scheduler still removes only
         // the exact selected Cloudlet objects after this pass.
         List<Cloudlet> pending = FLAFixedVmReadyPriority.ordered(getCloudletList());
+        FLAFixedVmReadyPriority.traceIdleVmChoices(getCloudletList(),pending,mId2Vm);
         int size = pending.size();
 
         for (int i = 0; i < size; i++) {
