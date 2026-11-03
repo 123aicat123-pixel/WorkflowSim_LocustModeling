@@ -1,0 +1,140 @@
+name: v12 fair 25-case family bootstrap and frozen-HV-reference robustness
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v12-statistical-robustness.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  v12-uncertainty:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable v12 full-fairness source run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41572425682
+          github-token: ${{ github.token }}
+          pattern: v12full-*
+          path: input
+          merge-multiple: false
+      - name: Five-family paired bootstrap and multi-reference sensitivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 - <<'PY'
+          import pathlib,csv,collections,statistics,math,random,itertools
+          files=list(pathlib.Path('input').rglob('*_replays.csv'))
+          sums=list(pathlib.Path('input').rglob('*_summary.csv'))
+          assert len(files)==len(sums)==25,(len(files),len(sums))
+          methods=('DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]')
+          families=('CyberShake_100','Epigenomics_100','Inspiral_100','Montage_100','Sipht_100')
+          points=collections.defaultdict(list)
+          for f in files:
+              with f.open(newline='') as src:rows=list(csv.DictReader(src))
+              assert rows
+              for r in rows:
+                  wf,seed,alg=r['workflow'],int(r['seed']),r['algorithm']
+                  assert wf in families and seed in (1,2,3,4,5) and alg in methods
+                  m,c=float(r['sim_makespan']),float(r['sim_cost'])
+                  assert math.isfinite(m) and math.isfinite(c) and m>0 and c>0
+                  points[(wf,seed,alg)].append((m,c))
+          assert len(points)==75
+          for f in sums:
+              with f.open(newline='') as src:rows=list(csv.DictReader(src))
+              assert len(rows)==3 and {x['algorithm'] for x in rows}==set(methods)
+              assert all(int(r['captured_evaluations'])==int(r['evaluations'])==3030 for r in rows)
+          maxes={}
+          for wf in families:
+              ps=[p for (w,seed,alg),arr in points.items() if w==wf for p in arr]
+              maxes[wf]=(max(z[0] for z in ps),max(z[1] for z in ps))
+          def nd(arr):
+              a=sorted(set(arr))
+              return [p for p in a if not any(q!=p and q[0]<=p[0] and q[1]<=p[1] for q in a)]
+          def hv(arr,ref):
+              total=0.0;last=ref[1]
+              for m,c in nd(arr):
+                  if m<ref[0] and c<last:
+                      total+=(ref[0]-m)*(last-c)
+                      last=c
+              return total
+          rng=random.Random(144503)
+          scales=(1.02,1.05,1.10,1.20,1.50)
+          report=['# v12 same-cost-seed fairness: five-family uncertainty and HV-reference sensitivity',
+                  '',
+                  'Source run: 41572425682, 25 paired cases and three equal-initialization algorithms, 3030 target evaluations per algorithm.',
+                  'References fixed within a DAG family across ALL three algorithms and five seeds, derived from observed extremes, not selected for v12.',
+                  'This post-hoc test does not create a preregistered benchmark or an independent untouched family; avoid claims of statistical superiority from five correlated workflow families.',
+                  'Only planned nondominated candidates were replayed through WorkflowSim. True evaluated-schedule Pareto frontier may differ.',
+                  '',
+                  '| Common HV-reference scale | v12 versus seeded NSGA-II paired mean | v12 wins | v12 versus v7 paired mean | v12 wins |',
+                  '|---|---:|---:|---:|---:|']
+          fullrows=[]
+          baseline_winners={}
+          for scale in scales:
+              refs={wf:(maxes[wf][0]*scale+1,maxes[wf][1]*scale+1) for wf in families}
+              values={(wf,seed,alg):hv(arr,refs[wf]) for (wf,seed,alg),arr in points.items()}
+              def diff(other,wf,seed):
+                  return 100*(values[(wf,seed,methods[1])]/max(1e-12,values[(wf,seed,other)])-1)
+              vsNs=[diff(methods[2],wf,seed) for wf in families for seed in range(1,6)]
+              vsV7=[diff(methods[0],wf,seed) for wf in families for seed in range(1,6)]
+              report.append(f'| {scale:.2f} | {statistics.mean(vsNs):+.3f}% | {sum(x>0 for x in vsNs)}/25 | {statistics.mean(vsV7):+.3f}% | {sum(x>0 for x in vsV7)}/25 |')
+              if abs(scale-1.05)<1e-8:
+                  for wf in families:
+                      for seed in range(1,6):
+                          baseline_winners[(wf,seed)]=max(methods,key=lambda a:values[(wf,seed,a)])
+                  details=[]
+                  for other in (methods[2],methods[0]):
+                      famMeans={wf:statistics.mean(diff(other,wf,seed) for seed in range(1,6)) for wf in families}
+                      observed=statistics.mean(famMeans.values())
+                      draws=[]
+                      for _ in range(15000):
+                          sampled=[famMeans[rng.choice(families)] for _ in families]
+                          draws.append(statistics.mean(sampled))
+                      draws.sort()
+                      lower,upper=draws[int(len(draws)*0.025)],draws[int(len(draws)*0.975)]
+                      null=[statistics.mean(sign*famMeans[fam] for sign,fam in zip(signs,families))
+                            for signs in itertools.product((-1,1),repeat=len(families))]
+                      pvalue=sum(abs(x)>=abs(observed)-1e-10 for x in null)/len(null)
+                      details.append((other,observed,lower,upper,pvalue,[famMeans[f] for f in families]))
+              for wf in families:
+                  for seed in range(1,6):
+                      for alg in methods:
+                          fullrows.append(dict(scale=scale,workflow=wf,seed=seed,algorithm=alg,
+                                               hv=values[(wf,seed,alg)],ref_m=refs[wf][0],ref_c=refs[wf][1]))
+          report+=['','## Family-block exploratory uncertainty at common scale 1.05',
+                   '',
+                   '| Comparator | Mean paired HV % | 95% family-block bootstrap | Exact five-family sign-flip p |',
+                   '|---|---:|---:|---:|']
+          for other,mu,lo,hi,p,fams in details:
+              report.append(f'| {other} | {mu:+.3f}% | [{lo:+.3f}%, {hi:+.3f}%] | {p:.4f} |')
+          report+=['',
+                   'The five seeds within each family are dependent cases, not 25 independent workload families. The 2^5 sign-flip resolution is coarse.',
+                   'The bootstrap is exploratory, conditional on the five reused families and chosen candidate algorithms. All tested references are post-hoc.',
+                   '',
+                   '## Winner changes relative to common scale 1.05',
+                   '']
+          for scale in scales:
+              vals={(wf,seed,alg):row['hv'] for row in fullrows if row['scale']==scale for wf,seed,alg in [(row['workflow'],row['seed'],row['algorithm'])]}
+              changed=sum(max(methods,key=lambda a:vals[(wf,seed,a)])!=baseline_winners[(wf,seed)]
+                          for wf in families for seed in range(1,6))
+              report.append(f'- {scale:.2f}: {changed}/25 per-run winner changes.')
+          pathlib.Path('reports/v12_fair_robustness.md').write_text('\n'.join(report)+'\n')
+          with pathlib.Path('reports/v12_fair_robustness.csv').open('w',newline='') as file:
+              writer=csv.DictWriter(file,fieldnames=list(fullrows[0]))
+              writer.writeheader();writer.writerows(fullrows)
+          print('\n'.join(report))
+          PY
+          cat reports/v12_fair_robustness.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v12-family-bootstrap-reference-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
