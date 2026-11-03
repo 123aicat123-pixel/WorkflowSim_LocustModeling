@@ -319,3 +319,31 @@ Crucial distinctions:
 - FLA's search mechanisms, even with this promising initialization technique, still require an independently demonstrated gain over a fair equally initialized NSGA-II. The next experimental option, `v8`, explores FLA-specific Pareto extreme survivor preservation. It remains hypothetical until actual logs confirm any improvement.
 
 The default `NSGA-II` remains unseeded; `CONFIG_COST_SEEDING` is an opt-in fairness-test switch. Do not describe this GitHub fork as bit-identical to a user's local Windows checkout.
+
+## V8 Pareto-extreme survivor retention: negative ablation (2026-11-03)
+
+Hypothesis: the much narrower Pareto front of v6/v7 on Montage_100 might be improved by **FLA-specific environmental retention** of the best observed cost solution and/or best observed makespan solution. All V8 variants inherited the **identical v7-costseed initial proposals**, v6 population novelty repair, FLA archive recombination, and the same 3030 target-function evaluations, so the comparison is specifically about survivor selection and its interaction with guidance. All variants are default-OFF except when explicitly selected by the experiment driver.
+
+A controlled v8 development run used Montage_100, CyberShake_100, Sipht_100 × seeds 1–3, population 30 and generations 100. All four variants completed with true WorkflowSim-replayed candidate fronts and one common frozen simulator-HV reference per DAG family across all seeds.
+
+| v8 compared with v7-costseed | Mean paired simulated-HV change over 9 runs | v8 wins |
+|---|---:|---:|
+| v8-cost: reserve lowest-cost survivor | **−3.746%** | **3/9** |
+| v8-dual: reserve cost and makespan extremes | −2.500% | 2/9 |
+| v8-dual-guide: also use min-cost archive guide | −2.156% | 3/9 |
+
+Family-level paired changes illustrate instability:
+
+| DAG family | v8-cost vs v7 | v8-dual vs v7 | v8-dual-guide vs v7 |
+|---|---:|---:|---:|
+| CyberShake_100 | +0.109% | +1.018% | +2.266% |
+| Montage_100 | **−8.995%** | −3.566% | −4.538% |
+| Sipht_100 | −2.353% | −4.953% | −4.196% |
+
+All methods visited roughly 98–99.5% unique assignments per evaluated candidate, so this negative result was not resolved by existing novelty repair. Retaining extreme individuals in one generation did not guarantee improved final global simulated Pareto coverage. **V8 is REJECTED as the selected FLA version on this development set**, but its negative ablation is preserved. No held-out v8 test or claims of v8 improvement should be inferred from successful CI. V7-costseed remains the strongest tested FLA *candidate*, but the full 25-case matched-seed comparator still found **−0.695% mean HV and 9/25 wins versus NSGA-II[costseed]**, so we have not isolated an improved FLA-specific optimizer.
+
+[Actual 9-case v8 experiment, raw replay CSVs, evaluation-count assertions, and aggregate](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41562936100).
+
+### Publication decision constraint
+
+The project has useful reproducible engineering contributions and negative/positive algorithm ablations. It does **not** currently establish generally superior multiobjective DAG workflow optimization over a fair, equally initialized NSGA-II. Further studies should pre-register family, VM configuration, budget, comparator, shared reference points, and an untouched validation partition to avoid progressive tuning on the same small set of DAG families. No result here proves that a Q1 paper will be accepted.
