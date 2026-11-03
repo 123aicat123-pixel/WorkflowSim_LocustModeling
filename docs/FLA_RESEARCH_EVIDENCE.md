@@ -283,3 +283,13 @@ Thus a larger common reference point reverses the mean ranking of v7 versus NSGA
 **Non-negotiable fairness caveat:** matched `NSGA-II[costseed]` is an opt-in counterfactual (not canonical NSGA-II) using the same two cost-efficient initial VM mappings. The initial six-case control found v7 **+0.019%** mean paired HV and only **2/6** wins versus cost-seeded NSGA-II, whereas v7 beat unseeded NSGA-II by +7.366% and 6/6 in those same cases. Therefore the observed improvement is substantially explained by giving an optimizer better starting solutions; a FLA-specific search advantage **has not yet been isolated**.
 
 **Research status:** Engineering validation and objective evaluation are much stronger, but these experiments do not yet justify claiming Q1 journal publication or statistically significant superiority. The FLA code is a disclosed categorical-DAG adaptation, and MLEAO remains a reconstruction rather than a source-faithful independent replication. Primary simulated HV remains derived from planned-nondominated replay subsets rather than all visited schedules.
+
+## Identical v7 and NSGA-II cost seeding was directly verified
+
+A new independent GitHub Actions Java/WorkflowSim test invoked the explicit `fair-pair` experiment mode at a small 8×6 population-generation search. It asserts the **first two task-ID → VM-ID assignment maps from the passive objective recorder are exactly equal** for FLA v7 and `NSGA-II[costseed]`. The test also checks 56 actual target-function evaluations on each side and successful simulator replay.
+
+The test passed; thus the counterfactual does not merely use two similarly named heuristics: both optimizers start from the exact same two deterministic task assignments. Other random initial members and the optimizer-specific search rules remain different, as expected. The feature is disabled in unseeded NSGA-II and DAG-FLA variants.
+
+[Actual code assertions, Java build and simulator output](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41562447756).
+
+An extended **five DAG × five seed** paired comparison of FLA v7 against identically cost-seeded NSGA-II was configured in `.github/workflows/fla-v7-full-fairness.yml`; retain its computed results and limitations separately rather than inferring conclusions from an in-progress run.
