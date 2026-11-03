@@ -102,7 +102,7 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
@@ -182,7 +182,9 @@ public final class FLAResearchExperiment {
             List<Candidate> front = BUDGET_REPLAY_K > 0
                     ? ("random".equals(BUDGET_REPLAY_POLICY)
                         ? budgetedRandomVisited(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm)
-                        : budgetedPlannedCoverage(run.allVisited, BUDGET_REPLAY_K))
+                        : "scalar-sweep".equals(BUDGET_REPLAY_POLICY)
+                            ? budgetedScalarSweep(run.allVisited,BUDGET_REPLAY_K)
+                            : budgetedPlannedCoverage(run.allVisited,BUDGET_REPLAY_K))
                     : plannedNondominated(run.candidates);
             if (BUDGET_REPLAY_K > 0 && front.size() != BUDGET_REPLAY_K)
                 throw new IllegalStateException("Wrong prospective simulator replay call budget");
@@ -242,7 +244,7 @@ public final class FLAResearchExperiment {
                     "PROSPECTIVE_REPLAY_REPLICATE=" + BUDGET_REPLAY_REPLICATE,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
                     "Pre-simulation selection: " + BUDGET_REPLAY_POLICY +
-                    " (Pareto layer + max-min coverage, or deterministically seeded uniform random)",
+                    " (Pareto max-min coverage, extreme-first scalar sweep, or seeded random)",
                     "Selection never reads true simulator objective values; K is separate from optimizer evaluation counts",
                     "Simulator HV reference in summary is shared across solver arms within this run only",
                     "This is NOT the full visited simulator Pareto front and not a registered reference point",
@@ -625,6 +627,73 @@ public final class FLAResearchExperiment {
                 +" replicate="+BUDGET_REPLAY_REPLICATE
                 +" uniqueHistory="+unique.size());
         return new ArrayList<>(list.subList(0,budget));
+    }
+
+    /** Prospective extreme-first low-discrepancy scalar sweep, using PLANNED objectives only.
+     *  The first two weights protect minimum-cost and minimum-makespan extremes.
+     *  Exactly matches scripts/fla_replay_budget_audit.py:sweep() for K<=32.
+     */
+    private static List<Candidate> budgetedScalarSweep(List<Candidate> history,int budget) {
+        Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
+        for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
+        List<Candidate> remaining=new ArrayList<>(unique.values());
+        if(remaining.size()<budget)
+            throw new IllegalStateException("Insufficient distinct visited schedules for scalar sweep K="+budget);
+        double mMin=Double.POSITIVE_INFINITY,mMax=Double.NEGATIVE_INFINITY;
+        double cMin=Double.POSITIVE_INFINITY,cMax=Double.NEGATIVE_INFINITY;
+        for(Candidate c:remaining) {
+            valid(c.planned);
+            mMin=Math.min(mMin,c.planned[0]);mMax=Math.max(mMax,c.planned[0]);
+            cMin=Math.min(cMin,c.planned[1]);cMax=Math.max(cMax,c.planned[1]);
+        }
+        final double loM=mMin,loC=cMin;
+        final double spanM=Math.max(1e-12,mMax-mMin);
+        final double spanC=Math.max(1e-12,cMax-cMin);
+        Comparator<Candidate> order=Comparator
+                .comparingDouble((Candidate c)->c.planned[0])
+                .thenComparingDouble(c->c.planned[1])
+                .thenComparing(FLAResearchExperiment::canonicalMappingKey);
+        List<Candidate> picked=new ArrayList<>();
+        int maxWeightSteps=Math.min(101,budget);
+        for(int step=0;step<maxWeightSteps;step++) {
+            double w;
+            if(step==0)w=0.;
+            else if(step==1)w=1.;
+            else {
+                int value=step-1;
+                double power=0.5,radical=0.;
+                while(value!=0) {
+                    radical+=(value&1)*power;
+                    power*=0.5;
+                    value>>>=1;
+                }
+                w=radical;
+            }
+            Candidate best=null;
+            double bestScalar=Double.POSITIVE_INFINITY;
+            for(Candidate c:remaining) {
+                double scalar=w*(c.planned[0]-loM)/spanM+
+                        (1.-w)*(c.planned[1]-loC)/spanC;
+                int cmp=Double.compare(scalar,bestScalar);
+                if(best==null || cmp<0 || (cmp==0 && order.compare(c,best)<0)) {
+                    best=c;
+                    bestScalar=scalar;
+                }
+            }
+            picked.add(best);
+            remaining.remove(best);
+        }
+        if(picked.size()<budget) {
+            // Only used for K>101; fill with the same Pareto-coverage order.
+            for(Candidate c:budgetedPlannedCoverage(history,unique.size())) {
+                if(!picked.contains(c))picked.add(c);
+                if(picked.size()==budget)break;
+            }
+        }
+        if(picked.size()!=budget)throw new IllegalStateException("Wrong scalar sweep K="+budget);
+        System.out.println("PASS prospective planned-only scalar-sweep replay selection K="+budget
+                +" uniqueHistory="+unique.size());
+        return picked;
     }
 
     private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
