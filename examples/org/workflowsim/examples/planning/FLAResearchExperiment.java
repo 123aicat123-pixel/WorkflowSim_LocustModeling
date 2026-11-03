@@ -105,7 +105,7 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
@@ -182,9 +182,9 @@ public final class FLAResearchExperiment {
             }
             // Only unique planned-nondominated schedules are replayed, equally.
             run.plannedNdCount = plannedNondominated(run.candidates).size();
-            final boolean feedback = BUDGET_REPLAY_K > 0 && "online-nearest-hv".equals(BUDGET_REPLAY_POLICY);
+            final boolean feedback = BUDGET_REPLAY_K > 0 && BUDGET_REPLAY_POLICY.startsWith("online-");
             if (feedback && BUDGET_REPLAY_K < 5)
-                throw new IllegalArgumentException("online-nearest-hv requires K>=5");
+                throw new IllegalArgumentException("online feedback requires K>=5");
             if (feedback)
                 run.feedbackPool.addAll(budgetedPlannedCoverage(run.allVisited,
                         Math.min(64,run.distinctObservedAssignments)));
@@ -208,7 +208,7 @@ public final class FLAResearchExperiment {
             final int replayGoal = feedback ? BUDGET_REPLAY_K : front.size();
             for (int index=0;index<replayGoal;index++) {
                 if (feedback && index>=4) {
-                    FeedbackChoice selection = chooseOnlineFeedback(run.feedbackPool,run.candidates);
+                    FeedbackChoice selection = chooseFeedbackMode(run.feedbackPool,run.candidates,BUDGET_REPLAY_POLICY);
                     if (selection==null || run.candidates.contains(selection.candidate))
                         throw new IllegalStateException("Nonunique online feedback candidate");
                     run.candidates.add(selection.candidate);
@@ -272,7 +272,7 @@ public final class FLAResearchExperiment {
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
         if (BUDGET_REPLAY_K > 0) {
             saveVisitedFingerprints(wf,seed,prefix,runs);
-            if("online-nearest-hv".equals(BUDGET_REPLAY_POLICY))
+            if(BUDGET_REPLAY_POLICY.startsWith("online-"))
                 saveFeedbackTrace(prefix,runs);
             Path protocol = Paths.get(prefix + "_budget_protocol.txt");
             Files.write(protocol, Arrays.asList(
@@ -281,7 +281,7 @@ public final class FLAResearchExperiment {
                     "PROSPECTIVE_REPLAY_REPLICATE=" + BUDGET_REPLAY_REPLICATE,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
                     "Replay selection: " + BUDGET_REPLAY_POLICY +
-                    " (online-nearest-hv may use only already replayed simulated makespan; other policies are pre-simulation)",
+                    " (online variants may use previous real simulator outcomes only; other policies are pre-simulation)",
                     "Online mode starts with four fixed Pareto-cover schedules and uses past observations only for later choices",
                     "No replay policy may read labels of unobserved assignments; K is separate from optimizer evaluations",
                     "Simulator HV reference in summary is shared across solver arms within this run only",
@@ -529,6 +529,15 @@ public final class FLAResearchExperiment {
      * All constants are fixed before the new holdout seed cohort.
      */
     private static FeedbackChoice chooseOnlineFeedback(List<Candidate> pool,List<Candidate> selected) {
+        return chooseFeedbackMode(pool,selected,"online-nearest-hv");
+    }
+
+    /** Exact factor ablation: planned-front greedy, observed-front greedy, observed+residual. */
+    private static FeedbackChoice chooseFeedbackMode(List<Candidate> pool,List<Candidate> selected,String mode) {
+        if(!Arrays.asList("online-planned-hv","online-observed-hv","online-nearest-hv").contains(mode))
+            throw new IllegalArgumentException("Unsupported online feedback ablation: "+mode);
+        final boolean useObservedFront=!"online-planned-hv".equals(mode);
+        final boolean useResidual="online-nearest-hv".equals(mode);
         if(pool.size()<selected.size()+1 || selected.size()<4)
             throw new IllegalStateException("Invalid online feedback candidate pool");
         for(Candidate c:selected)
@@ -541,7 +550,8 @@ public final class FLAResearchExperiment {
         double spanM=Math.max(1e-12,maxM-minM),spanC=Math.max(1e-12,maxC-minC);
         final double refM=1.5*maxM+1.,refC=1.5*maxC+1.;
         List<double[]> observed=new ArrayList<>();
-        for(Candidate c:selected)observed.add(c.simulated);
+        for(Candidate c:selected)observed.add(
+                useObservedFront ? c.simulated : c.planned);
         final double observedHv=ParetoMetrics.hypervolume2D(ndPoints(observed),refM,refC);
         FeedbackChoice best=null;
         double bestSpacing=Double.NEGATIVE_INFINITY;
@@ -561,9 +571,12 @@ public final class FLAResearchExperiment {
                     nearest=seen;nearestDistance=distance;
                 }
             }
-            double ratio=nearest.simulated[0]/nearest.planned[0];
-            double shrink=1.+0.5*(ratio-1.);
-            shrink=Math.min(1.1,Math.max(0.9,shrink));
+            double shrink=1.;
+            if(useResidual) {
+                double ratio=nearest.simulated[0]/nearest.planned[0];
+                shrink=1.+0.5*(ratio-1.);
+                shrink=Math.min(1.1,Math.max(0.9,shrink));
+            }
             double predictedM=c.planned[0]*shrink;
             double predictedC=c.planned[1];
             List<double[]> proposed=new ArrayList<>(observed);
