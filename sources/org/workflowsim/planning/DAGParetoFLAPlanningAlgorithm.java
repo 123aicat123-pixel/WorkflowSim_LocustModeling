@@ -72,6 +72,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     /** v12 experimental alternative: reward actual surrogate Pareto-HV increment,
      * not just binary archive admission. Uses NO extra fitness evaluations. */
     public static boolean CONFIG_PHASE_HV_BANDIT = false;
+    /** v13: use DAG fan-in communication-affinity repair as the FLA phase-bandit's third arm. */
+    public static boolean CONFIG_JOIN_AWARE_RELOCATION = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -145,7 +147,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
     private final int edgeRelocationMode, criticalRelocationMode;
-    private final boolean usePhaseOperatorBandit, usePhaseHvBandit;
+    private final boolean usePhaseOperatorBandit, usePhaseHvBandit, useJoinAwareRelocation;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
@@ -169,6 +171,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private List<Solution> group1, group2;
     private double alpha1 = 0.85;
     private int doCount, eoCount, ssoCount, edgeChangeCount, criticalChangeCount;
+    private int joinRelocationAttempts, joinRelocationChanges;
 
     public DAGParetoFLAPlanningAlgorithm() {
         populationSize = CONFIG_POPULATION_SIZE;
@@ -199,6 +202,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         criticalRelocationMode = CONFIG_CRITICAL_RELOCATION_MODE;
         usePhaseOperatorBandit = CONFIG_PHASE_OPERATOR_BANDIT || CONFIG_PHASE_HV_BANDIT;
         usePhaseHvBandit = CONFIG_PHASE_HV_BANDIT;
+        useJoinAwareRelocation = CONFIG_JOIN_AWARE_RELOCATION;
+        if(useJoinAwareRelocation && !usePhaseHvBandit)
+            throw new IllegalArgumentException("v13 join arm requires HV bandit");
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -236,7 +242,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         group1 = new ArrayList<>(initial.subList(0, group1Size));
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
         archive.clear(); searchTrace.clear(); criticalProxyPairs.clear();
-        doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0; alpha1 = 0.85;
+        doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0;
+        joinRelocationAttempts=0; joinRelocationChanges=0; alpha1 = 0.85;
         for(int phase=0;phase<3;phase++) {
             Arrays.fill(banditUses[phase],0);
             Arrays.fill(banditAdmissions[phase],0);
@@ -339,7 +346,14 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     if(usePhaseOperatorBandit) {
                         banditArm=chooseBanditArm(phase);
                         if(banditArm==1)edgeRelocation(genes,isG1,true);
-                        else if(banditArm==2)criticalRelocate(genes);
+                        else if(banditArm==2) {
+                            if(useJoinAwareRelocation){
+                                joinRelocationAttempts++;
+                                int[] beforeJoin=genes.clone();
+                                joinAwareRelocate(genes,isG1);
+                                if(!Arrays.equals(beforeJoin,genes))joinRelocationChanges++;
+                            } else criticalRelocate(genes);
+                        }
                     }
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
@@ -482,6 +496,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     "FLA_PHASE_BANDIT usesBaseline=%d usesColocate=%d usesCritical=%d archiveAdmissionsBaseline=%d archiveAdmissionsColocate=%d archiveAdmissionsCritical=%d%n",
                     m.banditArmUses[0],m.banditArmUses[1],m.banditArmUses[2],
                     m.banditArmArchiveAdmissions[0],m.banditArmArchiveAdmissions[1],m.banditArmArchiveAdmissions[2]);
+        if(useJoinAwareRelocation)
+            System.out.printf(java.util.Locale.ROOT,
+                    "FLA_JOIN_AWARE attempted=%d changed=%d evaluations=%d%n",
+                    joinRelocationAttempts,joinRelocationChanges,m.objectiveEvaluations);
         if(m.criticalProxySamples>0)
             System.out.printf(java.util.Locale.ROOT,
                     "FLA_CRITICAL_PROXY_AUDIT samples=%d pearson=%.9f medianAbsolutePctError=%.9f%%%n",
@@ -958,6 +976,105 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             genes[k]=original;
         }
         if(bestTask>=0)genes[bestTask]=bestVm;
+    }
+
+
+    /**
+     * v13 candidate operator: dependency-join locality with a bounded two-gene
+     * repair. It uses ONLY static DAG edges, file sizes, VM service estimates
+     * and ALREADY constructed offspring assignments; it never calls evaluate().
+     *
+     * Select the fan-in task with the greatest estimated incoming cross-VM
+     * transfer burden. Relocate the join task to an eligible resource only if
+     * its estimated stage-in/service plus a subgroup-specific cost penalty
+     * improves. If it cannot move, try the highest-cross-transfer parent
+     * (only when it is allowed on the join VM). The second move is optional,
+     * and at most two assignment genes change. The actual time/cost tradeoff
+     * is assessed by the single normal stage-in-aware child evaluation.
+     */
+    private void joinAwareRelocate(int[] genes,boolean latencyFocused) {
+        if(n==0 || criticalParentIndices==null || optimisticServiceSeconds==null)return;
+        int join=-1;
+        double highest=0.0;
+        for(int child=0;child<n;child++) {
+            if(criticalParentIndices[child].length<2)continue;
+            double traffic=0.0;
+            for(int i=0;i<criticalParentIndices[child].length;i++) {
+                int parent=criticalParentIndices[child][i];
+                if(genes[parent]!=genes[child]) {
+                    double bw=Math.min(vmList.get(genes[parent]).getBw(),
+                            vmList.get(genes[child]).getBw());
+                    traffic+=criticalParentTransferMb[child][i]*8.0/Math.max(EPS,bw);
+                }
+            }
+            // Small deterministic tie bias favors more incoming dependencies.
+            traffic*=1.0+0.0001*criticalParentIndices[child].length;
+            if(traffic>highest) {highest=traffic;join=child;}
+        }
+        if(join<0 || highest<=EPS)return;
+        int original=genes[join];
+        double oldProcessing=optimisticServiceSeconds[join][original];
+        double oldCost=oldProcessing*vmList.get(original).getCost();
+        double bestScore=joinScore(genes,join,original,latencyFocused,oldProcessing,oldCost);
+        int bestVm=original;
+        for(int vm:allowed[join]){
+            if(vm==original)continue;
+            double score=joinScore(genes,join,vm,latencyFocused,oldProcessing,oldCost);
+            if(score+1e-8<bestScore) {bestScore=score;bestVm=vm;}
+        }
+        if(bestVm!=original) {
+            genes[join]=bestVm;
+            // Optional bounded two-gene affinity move, only for a second heavy
+            // incoming edge and only if its estimated compute cost is modest.
+            int second=-1;double heaviest=0.0;
+            for(int i=0;i<criticalParentIndices[join].length;i++) {
+                int parent=criticalParentIndices[join][i];
+                if(genes[parent]==bestVm || !taskAllowsVm(parent,bestVm))continue;
+                double current=optimisticServiceSeconds[parent][genes[parent]];
+                double moved=optimisticServiceSeconds[parent][bestVm];
+                double transfer=criticalParentTransferMb[join][i]*8.0/
+                        Math.max(EPS,Math.min(vmList.get(genes[parent]).getBw(),
+                                         vmList.get(bestVm).getBw()));
+                if(moved-current<=0.25*transfer && transfer>heaviest) {
+                    heaviest=transfer;second=parent;
+                }
+            }
+            if(second>=0)genes[second]=bestVm;
+            return;
+        }
+        // If join itself should stay put, try a safe single parent relocation.
+        int bestParent=-1;double bestBenefit=0.0;
+        for(int i=0;i<criticalParentIndices[join].length;i++) {
+            int parent=criticalParentIndices[join][i],vm=genes[parent];
+            if(vm==original || !taskAllowsVm(parent,original))continue;
+            double transfer=criticalParentTransferMb[join][i]*8.0/
+                    Math.max(EPS,Math.min(vmList.get(vm).getBw(),vmList.get(original).getBw()));
+            double extra=optimisticServiceSeconds[parent][original]-
+                    optimisticServiceSeconds[parent][vm];
+            double priceBefore=optimisticServiceSeconds[parent][vm]*vmList.get(vm).getCost();
+            double priceAfter=optimisticServiceSeconds[parent][original]*vmList.get(original).getCost();
+            double penalty=(latencyFocused?0.1:0.5)*Math.max(0.0,priceAfter-priceBefore)/
+                    Math.max(EPS,priceBefore)*Math.max(1.0,optimisticServiceSeconds[parent][vm]);
+            double benefit=transfer-extra-penalty;
+            if(benefit>bestBenefit+1e-8){bestBenefit=benefit;bestParent=parent;}
+        }
+        if(bestParent>=0)genes[bestParent]=original;
+    }
+
+    private double joinScore(int[] genes,int join,int vm,boolean latencyFocused,
+            double oldProcessing,double oldCost) {
+        double processing=optimisticServiceSeconds[join][vm],traffic=0.0;
+        for(int i=0;i<criticalParentIndices[join].length;i++){
+            int parent=criticalParentIndices[join][i];
+            if(genes[parent]!=vm){
+                double bw=Math.min(vmList.get(genes[parent]).getBw(),vmList.get(vm).getBw());
+                traffic+=criticalParentTransferMb[join][i]*8.0/Math.max(EPS,bw);
+            }
+        }
+        double price=processing*vmList.get(vm).getCost();
+        double penalty=(latencyFocused?0.1:0.5)*Math.max(0.,price-oldCost)/
+                Math.max(EPS,oldCost)*Math.max(1.0,oldProcessing);
+        return processing+traffic+penalty;
     }
 
     /**
