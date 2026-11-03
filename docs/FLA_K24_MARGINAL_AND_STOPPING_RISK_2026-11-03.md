@@ -49,3 +49,16 @@ Thus a planner-only HV plateau is **NOT an upper bound** on real simulator HV im
 2. A viable innovation would explicitly control the **number of actual simulator calls, estimation error, and risk of missing important simulated Pareto points**, with external calibration data and cost-aware stopping.
 3. Compare actual elapsed time and payoff, not merely fixed search counts and replay-call counts; original `_summary.csv` captures search wall-clock but not a complete per-assignment simulator timing breakdown.
 4. These measurements concern the post-search simulator evaluation protocol. They **do not prove FLA v12 optimizer superiority over equally initialized NSGA-II**.
+
+
+## Secondary check: solver ranking is sensitive to replay budget
+
+Using the same actual K24 prefix experiment and within-family frozen reference, paired FLA v12 minus cost-seeded NSGA-II relative simulated-HV differences are:
+
+| Scored prefix | Mean paired v12 relative HV difference | v12 wins vs NSGA-II out of 10 workflow/seed cases |
+|---|---:|---:|
+| K8 | +1.492% | 6/10 |
+| K16 | +0.522% | 4/10 |
+| K24 | +0.453% | 3/10 |
+
+These averages are influenced by large positive Montage_100 cases and hide negative Inspiral and CyberShake outcomes; they are not a robust superiority claim. The apparent v12 advantage becomes weaker as the replay budget increases, so the final optimizer ranking must always be reported under a **stated, identical** simulator replay protocol. These K8/K16 numbers are prefixes of the actual K24 run, not independently executed K8/K16 cases.
