@@ -130,7 +130,7 @@ def build(input_dir, report_dir, start, count, source_run):
       "- Random repeat draws are different simulator-selected subsets, NOT additional independently sampled DAG/optimizer seeds. Do not treat the 6 × 3 × draws as independent statistical samples.",
       "- Coverage is deterministic and repeated only for an identical-search sanity check; repeated cover runs cannot be counted as new evidence.",
       "- This test evaluates selector quality conditional on fixed planned-search histories; it does not show FLA v12 is better than cost-seeded NSGA-II.",
-      "- Four random draws per case are a pilot, not a publication-grade random-control distribution. Increase to at least 20–30 draws and more independent DAG/optimizer seeds with family-level uncertainty.",
+      f"- {count} random draws per case do not create independent DAG samples. Increase independent optimizer seeds and workflow families and report family-level uncertainty.",
       "- Different workflow families have different HV scales; only paired within-family relative effects are averaged.",
       "- References are frozen from an older pilot. They are within selected-point envelopes, not an externally justified performance bound; sensitivity checks remain necessary."]
     report_dir.mkdir(parents=True,exist_ok=True)
