@@ -1,0 +1,40 @@
+name: Read-only 36-Run Actual WorkflowSim Priority Intervention Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-runtime-priority-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  immutable-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all 3 original actual priority intervention artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41679712071
+          github-token: ${{ github.token }}
+          pattern: fla-ready-runtime-priority-*-41679712071
+          path: original
+      - name: Independently validate all 36 simulations and 24 paired comparisons
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_runtime_priority_actual_audit.py
+          python3 scripts/fla_runtime_priority_actual_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-source-sha.txt
+          echo 'Frozen true simulator Actions: 41679712071' > reports/original-run-id.txt
+          cat reports/actual_runtime_priority_conclusions.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save all cases, negative and positive
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-actual-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
