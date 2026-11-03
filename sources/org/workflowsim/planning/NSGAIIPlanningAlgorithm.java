@@ -521,6 +521,7 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     private StageInAwareScheduleEvaluator stageInAwareEvaluator;
     /** Exactly the same opt-in alternative as FLA, OFF by default. */
     private ReadyQueueScheduleEvaluator readyQueueEvaluator;
+    private DualModelScheduleObjective dualModelObjective;
     /** Number of objective evaluations (genotype decodes) performed in this run. */
     protected long evaluationCount = 0;
 
@@ -566,6 +567,14 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
                 ? new StageInAwareScheduleEvaluator(taskOrder, vmList) : null;
         readyQueueEvaluator=Boolean.getBoolean("dagfla.useReadyQueueObjective")
                 ?new ReadyQueueScheduleEvaluator(taskOrder,vmList):null;
+        String dualMode=System.getProperty("dagfla.dualModelMode","off");
+        if(!"off".equals(dualMode) && Boolean.getBoolean("dagfla.useReadyQueueObjective"))
+            throw new IllegalArgumentException("Conflicting decoder modes");
+        if(!"off".equals(dualMode) && stageInAwareEvaluator==null)
+            throw new IllegalArgumentException("Dual decoder requires stage-in-aware baseline");
+        dualModelObjective="off".equals(dualMode)?null:
+                new DualModelScheduleObjective(taskOrder,vmList,
+                        DualModelScheduleObjective.parseMode(dualMode));
     }
 
     
@@ -576,7 +585,9 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     protected double[] decode(int[] genotype) {
         evaluationCount++;
         double[] objectives = unifiedScheduleEvaluator.evaluate(genotype);
-        if(readyQueueEvaluator!=null) {
+        if(dualModelObjective!=null) {
+            objectives=dualModelObjective.evaluate(toAssignment(genotype));
+        } else if(readyQueueEvaluator!=null) {
             ReadyQueueScheduleEvaluator.Result corrected=
                     readyQueueEvaluator.evaluate(toAssignment(genotype));
             objectives=new double[]{corrected.makespan,corrected.cost};
