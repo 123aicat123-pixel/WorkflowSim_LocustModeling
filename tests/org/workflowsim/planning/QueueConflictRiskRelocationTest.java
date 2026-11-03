@@ -17,6 +17,10 @@ public final class QueueConflictRiskRelocationTest {
         for(int i=0;i<genes.length;i++)result.put(tasks.get(i).getCloudletId(),genes[i]);
         return result;
     }
+    private static CondorVM expensiveVm(int id) {
+        return new CondorVM(id,0,100,1,512,100,100000,
+                "Xen",2,0,0,0,new CloudletSchedulerSpaceShared());
+    }
     private static void eq(String label,double x,double expected) {
         if(!Double.isFinite(x)||Math.abs(x-expected)>1e-8)
             throw new AssertionError(label+": expected="+expected+" got="+x);
@@ -51,6 +55,15 @@ public final class QueueConflictRiskRelocationTest {
             cost,tasks,vms,allowed,importance,service,false,model);
         if(noCost.moved||!Arrays.equals(cost,original))
             throw new AssertionError("Cost-focused group must reject non-cost-improving relocation");
+        // A move would improve predicted makespan by one second but
+        // increase execution cost by >1%: the frozen Pareto guard rejects it.
+        List<CondorVM> priced=Arrays.asList(vm(0),expensiveVm(1));
+        ReadyQueueScheduleEvaluator pricedModel=new ReadyQueueScheduleEvaluator(tasks,priced);
+        int[] pricedCase=original.clone();
+        QueueConflictRiskRelocation.Result rejected=QueueConflictRiskRelocation.propose(
+            pricedCase,tasks,priced,allowed,importance,service,true,pricedModel);
+        if(rejected.moved||!Arrays.equals(pricedCase,original))
+            throw new AssertionError("Queue risk candidate violates registered 1% cost guard");
         int[][] onlyOne={{0},{0},{0},{1}};
         int[] blocked=original.clone();
         QueueConflictRiskRelocation.Result invalid=QueueConflictRiskRelocation.propose(
