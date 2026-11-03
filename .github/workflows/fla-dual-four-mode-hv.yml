@@ -46,4 +46,4 @@ jobs:
           retention-days: 90
           if-no-files-found: warn
 
-# Reanalyze once all eight immutable original simulation artifacts are present.
+# Reanalyze now that ALL 8 of 8 source optimizer/simulator artifacts are finalized (original 41672213156).
