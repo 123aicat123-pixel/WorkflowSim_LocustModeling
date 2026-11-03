@@ -1,0 +1,104 @@
+name: FLA Ready-Queue Cross-DAG Deterministic Genotype Gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-ready-queue-cross-dag.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  independent-genotypes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Inspiral_100, Montage_100, Sipht_60]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Recompile complete Java sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/four-task-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/old-decoder-regression.log
+      - name: Run real independent VM mappings, identical in both speed profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          for speed in default staggered; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.fixedTaskTrace=true -Ddagfla.readyQueueDiagnostic=true \
+              -Dliwsa.vmSpeedProfile="$speed" -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAReadyQueueCrossDagAudit \
+              '${{ matrix.workflow }}' "reports/${speed}.csv" \
+              > "reports/${speed}.log" 2>&1 || {
+                tail -80 "reports/${speed}.log"
+                exit 1
+              }
+          done
+          python3 - <<'PY'
+          import csv,math,pathlib,statistics
+          root=pathlib.Path('reports')
+          results=[]
+          expected={'all_vm0','all_vm12','round_robin','stride7'}
+          for speed in ('default','staggered'):
+            with (root/f'{speed}.csv').open(newline='') as f:
+              rows=list(csv.DictReader(f))
+            assert len(rows)==4
+            assert {r['policy'] for r in rows}==expected
+            assert {r['speed'] for r in rows}=={speed}
+            for r in rows:
+              assert r['seed']=='509'
+              assert r['workflow']=='${{ matrix.workflow }}'
+              for k in ('old_plan_makespan','new_ready_makespan','actual_makespan',
+                        'old_plan_cost','new_ready_cost','actual_cost',
+                        'old_makespan_abs_pct','new_makespan_abs_pct',
+                        'old_cost_abs_pct','new_cost_abs_pct',
+                        'old_start_mae','new_start_mae','old_finish_mae','new_finish_mae'):
+                assert math.isfinite(float(r[k])) and float(r[k])>=0,(k,r)
+            results+=rows
+          assert len(results)==8
+          for p in expected:
+            pair=[r for r in results if r['policy']==p]
+            assert len(pair)==2
+            assert {r['speed'] for r in pair}=={'default','staggered'}
+          with (root/'both_speed_cases.csv').open('w',newline='') as f:
+            w=csv.DictWriter(f,fieldnames=list(results[0]))
+            w.writeheader();w.writerows(results)
+          with (root/'cross_dag_report.md').open('w') as f:
+            f.write('# Deterministic ready-queue alternative: cross-DAG evidence\n\n')
+            f.write('Four predeclared mappings × two VM profiles, eight independent WorkflowSim replays, no optimizer search.\n\n')
+            f.write('| Profile | Old Makespan mean abs % | Ready-queue mean abs % | Delta (new−old pp) | Wins/Ties/Losses |\n')
+            f.write('|---|---:|---:|---:|---:|\n')
+            for speed in ('default','staggered'):
+              z=[r for r in results if r['speed']==speed]
+              a=statistics.mean(float(r['old_makespan_abs_pct']) for r in z)
+              b=statistics.mean(float(r['new_makespan_abs_pct']) for r in z)
+              d=[float(r['new_makespan_abs_pct'])-float(r['old_makespan_abs_pct']) for r in z]
+              wins=sum(x<-1e-8 for x in d)
+              ties=sum(abs(x)<=1e-8 for x in d)
+              losses=sum(x>1e-8 for x in d)
+              f.write(f'| {speed} | {a:.6f} | {b:.6f} | {b-a:+.6f} | {wins}/{ties}/{losses} |\n')
+            f.write('\n## Every case\n\n')
+            for r in results:
+              f.write(f"- {r['policy']} {r['speed']}: old={float(r['old_makespan_abs_pct']):.6f}%, "
+                      f"new={float(r['new_makespan_abs_pct']):.6f}%, "
+                      f"cost old/new={float(r['old_cost_abs_pct']):.6f}%/{float(r['new_cost_abs_pct']):.6f}%\n")
+            f.write('\nDevelopment-independent mapping choices but historically known DAG families. Not evidence of FLA HV gains.\n')
+          print((root/'cross_dag_report.md').read_text())
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cat reports/cross_dag_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive every pass, failure, and actual replay observation
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-ready-cross-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
