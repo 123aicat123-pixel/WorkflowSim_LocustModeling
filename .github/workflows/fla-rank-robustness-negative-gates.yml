@@ -1,0 +1,56 @@
+name: Cross-DAG generalization and epsilon dominance negative-control gates
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-rank-robustness-negative-gates.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  retrospective-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deterministic research dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install numpy==2.1.3 scipy==1.14.1 scikit-learn==1.5.2
+          python -m pip freeze > dependencies.txt
+      - name: Download exact pinned 8-case independent full-history simulator oracle
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41582476054
+          github-token: ${{ github.token }}
+          pattern: budget-*-41582476054
+          path: originals
+      - name: Strict leave-one-whole-workflow-family-out correction tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python scripts/fla_rank_generalization_gate.py originals reports \
+            2>&1 | tee reports/lofo_stdout.log
+      - name: Fixed epsilon-dominance full-history K16 ablation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/fla_epsilon_dominance_gate.py originals reports \
+            2>&1 | tee reports/epsilon_stdout.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          cp dependencies.txt reports/dependencies.txt
+          printf 'Original independent simulator oracle: GitHub Actions run 41582476054\n' > reports/original_source.txt
+          cat reports/rank_generalization_report.md >> "$GITHUB_STEP_SUMMARY"
+          cat reports/epsilon_pareto_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rank-robustness-negative-gates-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
