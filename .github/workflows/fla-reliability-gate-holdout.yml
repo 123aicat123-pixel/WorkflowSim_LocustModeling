@@ -1,0 +1,89 @@
+name: Prospective new synthetic bottleneck DAG40 K16 reliability gate holdout
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-reliability-gate-holdout.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: Bottleneck40 ${{ matrix.speed }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        speed: [default, staggered]
+        seed: [131, 132, 133]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Generate new locked bottleneck topology and compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD > ci-logs/source_sha.txt
+          python3 scripts/fla_reliability_gate_dax.py | tee ci-logs/bottleneck_sha256.log
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReplayReliabilityGateTest
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.VMSpeedProfilesRegressionTest
+      - name: Run matched K16 real WorkflowSim three-selector arms
+        shell: bash
+        run: |
+          set -euo pipefail
+          for policy in pareto-cover online-observed-hv online-reliability-gated; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+              -Dliwsa.vmPriceProfile=default \
+              -Ddagfla.budgetReplayK=16 \
+              -Ddagfla.budgetReplayPolicy="$policy" \
+              -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+              SynthBottleneck_40 '${{ matrix.seed }}' 30 100 \
+              "Output&Results/$policy-${{ matrix.speed }}-SynthBottleneck_40-s${{ matrix.seed }}" \
+              v12-fair-pair 2>&1 | tee "ci-logs/$policy.log"
+            grep -F 'PASS identical first TWO task->VM deterministic cost seeds' "ci-logs/$policy.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-bottleneck-${{ matrix.speed }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            config/dax/SynthBottleneck_40.xml
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_visited_fingerprints.csv
+            Output&Results/*_online_trace.csv
+            Output&Results/*_budget_protocol.txt
+          retention-days: 90
+  report:
+    needs: paired
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: gate-bottleneck-*-${{ github.run_id }}
+          path: inputs
+      - name: Assert all independent K16 counts, fingerprints, causal choices and HV comparisons
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_reliability_gate_holdout.py inputs reports | tee reports/audit.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/bottleneck_gate_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-bottleneck-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
