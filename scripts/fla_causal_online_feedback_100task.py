@@ -61,7 +61,7 @@ def run(root,out):
                 pairs.append(dict(workflow=wf,seed=seed,algorithm=alg,online_hv=online,
                     cover_hv=cover,online_relative_gain_pct=100*(online/cover-1),
                     online_wins=int(online>cover),cover_wins=int(cover>online)))
-    assert len(pairs)==18 and len(results)==36
+    assert len(pairs)==30 and len(results)==60
     out.mkdir(parents=True,exist_ok=True)
     for name,rows in (("causal_online_hv.csv",results),("causal_online_paired.csv",pairs)):
         with (out/name).open("w",newline="") as f:
