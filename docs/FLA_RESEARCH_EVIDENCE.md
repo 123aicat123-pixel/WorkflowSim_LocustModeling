@@ -486,3 +486,37 @@ Per-family values: v10-critical was CyberShake **−0.894%**, Montage **−0.997
 [Complete nine-case v10 WorkflowSim replay logs, budget checks, and raw candidate CSVs](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41567895844).
 
 **Scientific next question:** The cheap v10 completion-time proxy ignores exact WorkflowSim insertion gaps, repository caching and some StageIn behavior. It was intended only to select candidate genotypes cheaply. Its accuracy and ranking correlation against the actual stage-in-aware planning evaluator and simulator should be *measured*, not assumed; a poorly aligned proxy is a plausible explanation for the negative ablation, but no causal link is claimed. Continuing to add mutation operators without this diagnostic is not evidence-driven. FLA v7-costseed remains the strongest studied FLA candidate but has not beaten identically cost-seeded NSGA-II in the full 25-case fairness test.
+
+
+## v10 surrogate accuracy versus local Pareto correctness (2026-11-03)
+
+Why did the v10 makespan-oriented mutation **lower** the two-objective simulator HV despite being based on a DAG-aware completion-time proxy? We tested this separately without confounding the fixed optimization budget.
+
+**Global surrogate fidelity:** Three 100-task DAG families × two v10 variants, seed=77, population 30, 20 generations. Each variant used **630 normal objective evaluations** and recorded the proxy predicted makespan alongside the ordinary stage-in-aware planning makespan for each of 600 offspring; the proxy generated **zero additional true search objective calls**.
+
+| DAG | Pearson coefficient of surrogate versus stage-in-aware makespan | Median absolute percent error |
+|---|---:|---:|
+| CyberShake_100 | ~0.998 | 4.888% |
+| Montage_100 | ~0.998 | ~1.6% |
+| Sipht_100 | ~0.999 | 0.124% |
+
+[Recorded fidelity summaries and exact evaluator-count assertions](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41568687779).
+
+High global correlation does **not** imply that a one-gene neighbor selected by the proxy is genuinely Pareto-improving. We therefore added a **default-OFF post-search counterfactual** (`-Ddagfla.criticalLocalAudit=true`), executed AFTER normal search and without inserting any candidate into the archive, calling the independent `StageInAwareScheduleEvaluator` on the original and changed task assignment. The extra StageIn evaluations are transparently post-search **diagnostic calculations**, not added optimizer fitness calls or real independent WorkflowSim simulations. Search still had **630 objective evaluations per run**, with 30 candidate local moves sampled from its surviving population for each family/variant, seed=87.
+
+| DAG and move strategy | StageIn makespan improved | StageIn cost increased | Move strictly Pareto-dominates original | Original strictly dominates move | Mixed / tied |
+|---|---:|---:|---:|---:|---:|
+| CyberShake_100, v10-critical | 5/30 | 29/30 | 1/30 | 25/30 | 4/30 |
+| CyberShake_100, v10-guarded | 6/30 | 23/30 | 4/30 | 20/30 | 6/30 |
+| Montage_100, v10-critical | 30/30 | 27/30 | 3/30 | 0/30 | 27/30 |
+| Montage_100, v10-guarded | 24/30 | 26/30 | 3/30 | 3/30 | 24/30 |
+| Sipht_100, v10-critical | 21/30 | 29/30 | 0/30 | 8/30 | 22/30 |
+| Sipht_100, v10-guarded | 23/30 | 28/30 | 0/30 | 5/30 | 25/30 |
+
+**Interpretation:** On CyberShake, only 5 of 30 v10-critical proxy-positive moves actually shortened time under the independent stage-in-aware planning model; local direction agrees only 5/30 despite nearly perfect global Pearson correlation. On Montage, all 30 moves shortened makespan, but **27 also increased rental cost**, so only 3 strictly improved BOTH objectives. On Sipht, 21 shortened makespan but NONE strictly Pareto-dominated their initial schedule. Thus, improving one objective in isolation is not enough to improve HV; most moves either lose outright or move along a tradeoff. The soft v10 cost penalty was insufficient to remove this issue.
+
+This is a **mechanism diagnostic**, not a claim that v10 causally failed solely because of these factors. It uses a single independently sampled post-search population per workload and the StageIn-aware PLANNING evaluator, not WorkflowSim's real simulator and not large multi-seed confirmatory statistics. The v10 negative 9-case independent WorkflowSim HV result remains the decisive algorithm evidence.
+
+[Full post-search cost/time counterfactual, all six matrices, exact search-budget assertions and raw aggregate](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41569397876).
+
+**Next methodological choice:** If a true StageIn-aware Pareto local search is tested, EVERY candidate objective evaluation used by that search must be charged to the same total fitness budget as a seeded NSGA-II comparator; otherwise its apparent gain would simply be extra optimization work. Alternatively, a cheap cost-and-time multiobjective surrogate must be calibrated for *local dominance preservation*, not merely global objective correlation. Avoid further unvalidated one-objective mutation stacking.
