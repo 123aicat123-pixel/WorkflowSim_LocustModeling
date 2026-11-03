@@ -17,7 +17,7 @@ jobs:
         with:
           run-id: 41618003870
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          pattern: v15-*-${{ github.run_id == 0 && '' || '41618003870' }}
+          pattern: v15-*-41618003870
           path: original
       - name: Audit original eight experiment jobs without new optimization
         shell: bash
