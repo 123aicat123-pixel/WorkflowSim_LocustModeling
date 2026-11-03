@@ -1,0 +1,81 @@
+name: Prospective K-limited FLA WorkflowSim replay budget smoke
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-budget-prospective-smoke.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-k-replays:
+    name: K16 real simulator ${{ matrix.workflow }} s${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Inspiral_50]
+        seed: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build all current Java files and record source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD > ci-logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Exactly K real WorkflowSim replays without precomputing full oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.budgetReplayK=16 \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 8 9 \
+            'Output&Results/prospective_${{ matrix.workflow }}_s${{ matrix.seed }}' \
+            v12-fair-pair 2>&1 | tee ci-logs/prospective-run.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/prospective-run.log
+          test "$(grep -c 'PASS prospective planned-only replay selection K=16' ci-logs/prospective-run.log)" -eq 3
+      - name: Enforce exact 80 optimizer fitness evaluations and 16 simulator replays per algorithm
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math,collections
+          prefix=pathlib.Path('Output&Results/prospective_${{ matrix.workflow }}_s${{ matrix.seed }}')
+          with pathlib.Path(str(prefix)+'_summary.csv').open(newline='') as f:summary=list(csv.DictReader(f))
+          with pathlib.Path(str(prefix)+'_replays.csv').open(newline='') as f:replays=list(csv.DictReader(f))
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(summary)==3 and {r['algorithm'] for r in summary}==names
+          assert len(replays)==48 and {r['algorithm'] for r in replays}==names
+          assert all(int(r['evaluations'])==int(r['captured_evaluations'])==80 for r in summary)
+          assert all(int(r['replayed'])==16 for r in summary)
+          counts=collections.Counter(r['algorithm'] for r in replays)
+          assert all(counts[n]==16 for n in names),counts
+          for r in replays:
+              assert math.isfinite(float(r['sim_makespan'])) and float(r['sim_makespan'])>0
+              assert math.isfinite(float(r['sim_cost'])) and float(r['sim_cost'])>0
+              for obj in ('makespan','cost'):
+                  a=float(r['planned_'+obj]);b=float(r['independent_planned_'+obj])
+                  assert abs(a-b)<=1e-6*max(1,abs(b))
+          protocol=pathlib.Path(str(prefix)+'_budget_protocol.txt').read_text()
+          assert 'PROSPECTIVE_REPLAY_BUDGET_K=16' in protocol
+          limitations=pathlib.Path(str(prefix)+'_limitations.txt').read_text()
+          assert 'replay exactly K=16' in limitations
+          assert not pathlib.Path(str(prefix)+'_screening_samples.csv').exists()
+          print('PASS real K=16, three identical-cost-seed arms, 80 optimizer evaluations each, 48 true simulator replays')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prospective-k16-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/prospective_${{ matrix.workflow }}_s${{ matrix.seed }}_*
+          retention-days: 90
