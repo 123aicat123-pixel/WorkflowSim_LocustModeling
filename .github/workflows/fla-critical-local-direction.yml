@@ -1,4 +1,4 @@
-name: Check v10 local critical relocation direction under independent StageIn estimator
+name: Check v10 local critical moves for true Pareto dominance and cost tradeoffs
 
 on:
   push:
@@ -50,21 +50,22 @@ jobs:
           python3 - <<'PY'
           import pathlib,re,csv,math
           text=pathlib.Path('logs/local.log').read_text()
-          pat=r'FLA_CRITICAL_LOCAL_AUDIT proposed=(\d+) predictedPositive=(\d+) stageInPositive=(\d+) directionalAgreement=(\d+) meanPredictedImprovementPct=([+-]?[\d.eE-]+) meanStageInImprovementPct=([+-]?[\d.eE-]+)'
+          pat=r'FLA_CRITICAL_LOCAL_AUDIT proposed=(\d+) predictedPositive=(\d+) stageInPositive=(\d+) directionalAgreement=(\d+) meanPredictedImprovementPct=([+-]?[\d.eE-]+) meanStageInImprovementPct=([+-]?[\d.eE-]+) costIncreased=(\d+) paretoImproved=(\d+) paretoWorsened=(\d+) mixedOrTied=(\d+) meanCostIncreasePct=([+-]?[\d.eE-]+)'
           found=re.findall(pat,text)
           assert len(found)==1,found
-          n,p,t,a,pdelta,tdelta=found[0]
-          n,p,t,a=map(int,(n,p,t,a))
-          pdelta,tdelta=map(float,(pdelta,tdelta))
+          n,p,t,a,pdelta,tdelta,cinc,pbetter,pworse,mixed,cdelta=found[0]
+          n,p,t,a,cinc,pbetter,pworse,mixed=map(int,(n,p,t,a,cinc,pbetter,pworse,mixed))
+          pdelta,tdelta,cdelta=map(float,(pdelta,tdelta,cdelta))
           assert 0<n<=30 and 0<=p<=n and 0<=t<=n and 0<=a<=n
-          assert math.isfinite(pdelta) and math.isfinite(tdelta)
+          assert math.isfinite(pdelta) and math.isfinite(tdelta) and math.isfinite(cdelta)
+          assert 0<=cinc<=n and pbetter+pworse+mixed==n
           with pathlib.Path('Output&Results/local_${{ matrix.workflow }}_${{ matrix.variant }}_summary.csv').open(newline='') as f:
               rows=list(csv.DictReader(f))
           assert len(rows)==1 and int(rows[0]['evaluations'])==int(rows[0]['captured_evaluations'])==630
           with pathlib.Path('logs/local_metrics.csv').open('w') as f:
-              f.write('workflow,variant,proposed,predicted_positive,stagein_positive,agreement,mean_predicted_gain_pct,mean_stagein_gain_pct\n')
-              f.write('${{ matrix.workflow }},${{ matrix.variant }},%d,%d,%d,%d,%.9f,%.9f\n'%(n,p,t,a,pdelta,tdelta))
-          print('PASS post-search only; no extra optimizer evaluations. Directional agreement:',a,'/',n)
+              f.write('workflow,variant,proposed,predicted_positive,stagein_positive,agreement,mean_predicted_gain_pct,mean_stagein_gain_pct,cost_increased,pareto_improved,pareto_worsened,mixed_or_tied,mean_cost_increase_pct\n')
+              f.write('${{ matrix.workflow }},${{ matrix.variant }},%d,%d,%d,%d,%.9f,%.9f,%d,%d,%d,%d,%.9f\n'%(n,p,t,a,pdelta,tdelta,cinc,pbetter,pworse,mixed,cdelta))
+          print('PASS post-search, no extra optimizer calls. Agreement',a,'/',n,'Pareto improved/worse/mixed',pbetter,pworse,mixed)
           PY
       - uses: actions/upload-artifact@v4
         if: always()
@@ -105,12 +106,12 @@ jobs:
                   'AFTER optimizer search completes, each of up to 30 surviving genotypes receives one proposed v10 VM relocation.',
                   'The post-search diagnostic independently computes StageInAwareScheduleEvaluator makespan before/after each proposal, without using the objective fitness method, archive, or recorder.',
                   'These are additional **post-search** planning estimates and are NOT simulator replays or additional optimizer fitness calls.',
-                  'A local move can have excellent global correlation but poor local directional accuracy; this is a descriptive diagnostic.',
+                  'High global correlation does not imply accurate local decisions. Pareto dominance also requires considering rental cost, not makespan alone. These are independent StageIn planning estimates, NOT actual simulator replay.',
                   '',
-                  '| Workflow | Variant | Proposed local moves | Predicted positives | Actual StageIn positives | Directional agreement | Mean predicted improvement % | Mean actual StageIn improvement % |',
-                  '|---|---|---:|---:|---:|---:|---:|---:|']
+                  '| Workflow | Variant | Proposed moves | StageIn time improvements | Directional agreement | Pareto improved | Pareto worsened | Tradeoff/tied | Increased cost | Mean time improvement % | Mean cost change % |',
+                  '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|']
           for r in sorted(rows,key=lambda z:(z['workflow'],z['variant'])):
-              report.append(f'| {r["workflow"]} | {r["variant"]} | {r["proposed"]} | {r["predicted_positive"]} | {r["stagein_positive"]} | {r["agreement"]}/{r["proposed"]} | {float(r["mean_predicted_gain_pct"]):+.3f}% | {float(r["mean_stagein_gain_pct"]):+.3f}% |')
+              report.append(f'| {r["workflow"]} | {r["variant"]} | {r["proposed"]} | {r["stagein_positive"]} | {r["agreement"]}/{r["proposed"]} | {r["pareto_improved"]} | {r["pareto_worsened"]} | {r["mixed_or_tied"]} | {r["cost_increased"]} | {float(r["mean_stagein_gain_pct"]):+.3f}% | {float(r["mean_cost_increase_pct"]):+.3f}% |')
           pathlib.Path('reports/local_direction.md').write_text('\n'.join(report)+'\n')
           with pathlib.Path('reports/local_direction.csv').open('w',newline='') as f:
               w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
