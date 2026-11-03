@@ -23,12 +23,7 @@ public final class TimelineParetoNeighbor {
             for(int i=0;i<n;i++)if(allowed[i].length>1 && draw--==0)return i;
         }
         // Latest-finishing eligible task is the schedule's current trailing event.
-        // A 4-task tail window permits search beyond a single repeated genotype.
-        double[] finish=trace.finishes;
-        double threshold=Double.NEGATIVE_INFINITY;
-        for(int i=0;i<n;i++)if(allowed[i].length>1)
-            threshold=Math.max(threshold,finish[i]);
-        if(!Double.isFinite(threshold))return -1;
+         double[] finish=trace.finishes;
         int best=-1;double bestFinish=Double.NEGATIVE_INFINITY;
         for(int i=0;i<n;i++){
             if(allowed[i].length<2)continue;
@@ -39,9 +34,10 @@ public final class TimelineParetoNeighbor {
 
     public static int chooseVm(FLAScheduleEvaluator.ScheduleTrace trace,int[] genes,
             int task,int[] allowed,double[] service,List<CondorVM> vms,
-            boolean latencyFocused,boolean randomControl,Random rng,Task taskMetadata) {
+            boolean latencyFocused,boolean randomControl,Random rng,List<Task> taskOrder) {
         if(trace==null||genes==null||allowed==null||service==null||vms==null||
-           task<0||task>=genes.length||allowed.length<2||taskMetadata==null)
+           task<0||task>=genes.length||allowed.length<2||taskOrder==null||
+           taskOrder.size()!=genes.length)
             throw new IllegalArgumentException("Invalid neighbor VM context");
         int current=genes[task];
         if(randomControl){
@@ -56,10 +52,13 @@ public final class TimelineParetoNeighbor {
         // Input-stage cache and any downstream rescheduling are NOT exact here.
         // Crucially, the proposed genotype is then evaluated EXACTLY ONCE.
         double ready=0.;
-        for(Object parentObj:taskMetadata.getParentList()){
-            Task parent=(Task)parentObj;
-            // No hidden evaluator calls: use the explicitly available task trace
-            // only for VM occupancy, not a guessed real simulator label.
+        for(Task parent:taskOrder.get(task).getParentList()){
+            int parentIndex=-1;
+            for(int i=0;i<taskOrder.size();i++)
+                if(taskOrder.get(i)==parent){parentIndex=i;break;}
+            if(parentIndex<0 || parentIndex>=task)
+                throw new IllegalArgumentException("Parent outside preceding DAG order");
+            ready=Math.max(ready,trace.finishes[parentIndex]);
         }
         int chosen=-1;double best=Double.POSITIVE_INFINITY;
         for(int v:allowed) {

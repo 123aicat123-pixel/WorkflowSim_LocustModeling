@@ -318,7 +318,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         int alternative=TimelineParetoNeighbor.chooseVm(precedingTrace,neighbor,
                             chosenTask,allowed[chosenTask],optimisticServiceSeconds[chosenTask],
                             vmList,isG1,pairedLocalSearchMode==1,random,
-                            taskOrder.get(chosenTask));
+                            taskOrder);
                         neighbor[chosenTask]=alternative;
                     }
                     if(chosenTask>=0 && neighbor[chosenTask]==precedingNormal.genes[chosenTask])
