@@ -1,0 +1,102 @@
+name: v17 Frozen DO Random Independent-Size Four-Arm Confirmation
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v17-confirmation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: confirm ${{ matrix.dag }} ${{ matrix.speed }} seed${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        dag: [Epigenomics_46, Inspiral_50, CyberShake_100, Sipht_100]
+        speed: [default, staggered]
+        seed: [211, 212]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile, test 74-generation mask and causal timeline evaluator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source_sha.txt
+          find sources examples tests -name '*.java' -type f | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FLAPairedSearchWindowTest
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FLAPopulationDiagnosticsTest
+      - name: Execute four matching 3030 fitness-budget plus K16 actual WorkflowSim arms
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.populationDiagnostics=true \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.dag }}' '${{ matrix.seed }}' 30 100 \
+            "Output&Results/v17-confirm-${{ matrix.speed }}-${{ matrix.dag }}-s${{ matrix.seed }}" \
+            v17-confirm-fourarm 2>&1 | tee ci-logs/experiment.log
+          test "$(grep -c 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/experiment.log)" -eq 3
+          test "$(grep -c 'FLA_PAIRED_WINDOW mode=' ci-logs/experiment.log)" -eq 2
+          python3 - <<'PY'
+          import pathlib,csv,re
+          txt=pathlib.Path('ci-logs/experiment.log').read_text()
+          matches=sorted(tuple(map(int,x)) for x in re.findall(
+            r'FLA_PAIRED_WINDOW mode=(\d+) activeGenerations=(\d+) localTrials=(\d+) normalBanditSlots=(\d+)',txt))
+          assert matches==[(1,74,1036,1964),(2,74,1036,1964)],matches
+          prefix=pathlib.Path("Output&Results/v17-confirm-${{ matrix.speed }}-${{ matrix.dag }}-s${{ matrix.seed }}")
+          with pathlib.Path(str(prefix)+'_summary.csv').open(newline='') as f:s=list(csv.DictReader(f))
+          with pathlib.Path(str(prefix)+'_replays.csv').open(newline='') as f:r=list(csv.DictReader(f))
+          with pathlib.Path(str(prefix)+'_population_diagnostics.csv').open(newline='') as f:d=list(csv.DictReader(f))
+          assert len(s)==4 and len(r)==64 and len(d)==303
+          assert all(int(x['evaluations'])==int(x['captured_evaluations'])==3030 and int(x['replayed'])==16 for x in s)
+          print('PASS independent-size confirmation: 1036 local DO and late, 3030 planned calls per solver, K16 simulated')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-confirm-${{ matrix.dag }}-${{ matrix.speed }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_budget_protocol.txt
+            Output&Results/*_population_diagnostics.csv
+          retention-days: 90
+  report:
+    needs: compare
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v17-confirm-*-${{ github.run_id }}
+          path: original
+      - name: Verify all source-pinned independent-size real simulator fronts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v17_confirmation_report.py
+          python3 scripts/fla_v17_confirmation_report.py original reports | tee reports/analysis.log
+          git rev-parse HEAD > reports/source_sha.txt
+          cat reports/v17_confirm_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-confirm-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
