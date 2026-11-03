@@ -1,0 +1,38 @@
+name: Pinned cross-VM reference scale and objective extremes audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-cross-vm-reference-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve original 20 fully executed and independently simulated VM-speed runs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41603751878
+          github-token: ${{ github.token }}
+          pattern: crossvm-*-41603751878
+          path: originals
+      - name: Audit original simulated outcomes against multiple planned-only references
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_cross_vm_reference_audit.py originals reports 2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          printf '%s\n' 'Original real WorkflowSim run: 41603751878' > reports/original_run.txt
+          cat reports/reference_sensitivity_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: crossvm-reference-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
