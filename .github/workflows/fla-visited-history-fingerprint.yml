@@ -1,0 +1,85 @@
+name: Exact history hashes across four prospective K16 policies
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-visited-history-fingerprint.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Execute same 80-evaluation history with four real K16 selector variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          for spec in pareto-cover:0 scalar-sweep:0 random:0 random:1; do
+            policy="$(printf '%s' "$spec" | cut -d: -f1)"
+            draw="$(printf '%s' "$spec" | cut -d: -f2)"
+            tag="$policy-$draw"
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.budgetReplayK=16 \
+              -Ddagfla.budgetReplayPolicy="$policy" \
+              -Ddagfla.budgetReplayReplicate="$draw" \
+              -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+              Montage_25 1 8 9 "Output&Results/fingerprint_$tag" v12-fair-pair \
+              2>&1 | tee "ci-logs/$tag.log"
+            grep -F 'PASS identical first TWO task->VM deterministic cost seeds' "ci-logs/$tag.log"
+          done
+      - name: Check SHA256 equality and actual distinct replays per arm
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import pathlib,csv,re
+          root=pathlib.Path('Output&Results')
+          names={'DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          signatures=[];random_sets={}
+          for tag in ('pareto-cover-0','scalar-sweep-0','random-0','random-1'):
+              p=root/('fingerprint_'+tag)
+              def read(s):
+                  with pathlib.Path(str(p)+s).open(newline='') as f:return list(csv.DictReader(f))
+              fps,summary,replays=read('_visited_fingerprints.csv'),read('_summary.csv'),read('_replays.csv')
+              assert len(fps)==len(summary)==3 and len(replays)==48
+              assert {r['algorithm'] for r in fps}=={r['algorithm'] for r in summary}==names
+              by={r['algorithm']:r for r in summary}
+              sig={}
+              for r in fps:
+                  alg=r['algorithm']
+                  assert re.fullmatch('[0-9a-f]{64}',r['history_sha256'])
+                  assert int(r['distinct_visited'])==int(by[alg]['distinct_observed'])
+                  assert int(by[alg]['evaluations'])==int(by[alg]['captured_evaluations'])==80
+                  assert int(by[alg]['replayed'])==16
+                  sig[alg]=r['history_sha256']
+              signatures.append(sig)
+              if tag.startswith('random'):
+                  random_sets[tag]={alg:set(r['mapping'] for r in replays if r['algorithm']==alg) for alg in names}
+          assert all(s==signatures[0] for s in signatures),signatures
+          assert all(random_sets['random-0'][a]!=random_sets['random-1'][a] for a in names)
+          print('PASS exact ordered visited-genotype/fitness SHA256 equality under all 4 policies and each of the 3 algorithms')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: history-hash-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/fingerprint_*_visited_fingerprints.csv
+            Output&Results/fingerprint_*_summary.csv
+            Output&Results/fingerprint_*_replays.csv
+          retention-days: 90
