@@ -24,7 +24,7 @@ jobs:
           C=m.Planned
           pts=[C(str(i),float(i+2),float(60-i)) for i in range(45)]
           assert m.front([(1,5),(2,6),(3,3),(5,2)])==[(1,5),(3,3),(5,2)]
-          assert abs(m.hv([(1,5),(3,3)],(6,7))-14)<1e-9
+          assert abs(m.hv([(1,5),(3,3)],(6,7))-16)<1e-9
           assert m.hv([(1,5)],(6,7))<=m.hv([(1,5),(3,3)],(6,7))
           for policy in ('pareto-cover','half-cover-half-random','scalar-sweep','random'):
               for k in (8,16,24,32):
