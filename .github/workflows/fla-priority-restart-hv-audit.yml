@@ -1,0 +1,40 @@
+name: Read-only Full-Priority vs Matched Restart Actual True-HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-restart-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  complete-original-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all 40 immutable original optimizer and actual simulator artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41689142588
+          github-token: ${{ github.token }}
+          pattern: fla-priority-restart-*-41689142588
+          path: original
+      - name: Independently recompute exact-source budgets, repeat-control and common actual HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_priority_restart_deconfound_hv_audit.py
+          python3 scripts/fla_priority_restart_deconfound_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          printf 'Immutable original 40/40 success optimizer+real-simulator run: 41689142588\n' > reports/original-source-run.txt
+          cat reports/full_priority_restart_true_hv_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all 48 true K16 fronts, negatives, duplicate control and raw paired differences
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-priority-restart-independent-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
