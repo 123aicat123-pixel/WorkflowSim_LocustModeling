@@ -43,7 +43,7 @@ def read_originals(root):
         if not directory.is_dir():continue
         idfile=directory/"block-id.txt"
         if not idfile.exists():continue
-        properties=dict(line.strip().split("=",1) for line in idfile.read_text().splitlines())
+        properties=dict(line.strip().split("=",1) for line in idfile.read_text().split())
         wf=properties["DAG"];seed=int(properties["seed"]);decoder=properties["decoder"]
         key=(wf,seed,decoder)
         if wf not in DAGS or seed not in SEEDS or decoder not in DECODERS or key in result:
