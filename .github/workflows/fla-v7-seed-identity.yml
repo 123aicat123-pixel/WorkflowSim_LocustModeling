@@ -1,0 +1,62 @@
+name: Verify v7 and NSGA-II receive exactly identical cost initialization
+
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v7-seed-identity.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  seed-equivalence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile every Java source from scratch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/head.txt
+          find sources examples tests -name '*.java' -type f | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Exact first two genotype identity and simulator replay test
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            Montage_25 1234 8 6 'Output&Results/v7_fair_seed_identity' fair-pair \
+            2>&1 | tee ci-logs/identity.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds in FLA v7 and NSGA-II' ci-logs/identity.log
+      - name: Verify both still have matching real evaluation budgets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv,pathlib,math
+          with pathlib.Path('Output&Results/v7_fair_seed_identity_summary.csv').open(newline='') as f:
+              rows=list(csv.DictReader(f))
+          assert len(rows)==2
+          assert {r['algorithm'] for r in rows}=={
+             'DAG-Pareto-FLA[v7-costseed]','NSGA-II[costseed]'}
+          assert all(int(r['evaluations'])==int(r['captured_evaluations'])==56 for r in rows),rows
+          assert all(float(r['sim_hv'])>=0 and math.isfinite(float(r['sim_hv'])) for r in rows)
+          print('PASS both solvers received equal cost seed schedules and 56 fitness evaluations')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v7-seed-identity-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/v7_fair_seed_identity_*
+          retention-days: 90
+          if-no-files-found: warn
