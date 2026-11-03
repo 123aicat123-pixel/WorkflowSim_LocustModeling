@@ -1,0 +1,113 @@
+name: FLA Fixed-Assignment Two-Speed WorkflowSim Pilot
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-fixed-assignment-speed-pilot.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  fixed-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Epigenomics_46, CyberShake_100]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable original default-speed candidate assignments
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41626382711
+          github-token: ${{ github.token }}
+          pattern: v17-confirm-default-${{ matrix.workflow }}-s211-41626382711
+          path: original
+      - name: Compile clean Java tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes Output\&Results
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Freeze exact mappings and independently simulate both VM MIPS profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          mapfile -t sources < <(find original -type f -name "v17-confirm-default-${{ matrix.workflow }}-s211_replays.csv")
+          test "${#sources[@]}" -eq 1
+          source_csv="${sources[0]}"
+          cp "$source_csv" reports/original_default_k16.csv
+          for arm in 'DAG-Pareto-FLA[v12-hvbandit]' 'NSGA-II[costseed]'; do
+            case "$arm" in
+              DAG*) label='v12' ;;
+              *) label='nsga' ;;
+            esac
+            for profile in default staggered; do
+              java -Dworkflowsim.planningStageInAware=true \
+                -Dliwsa.vmSpeedProfile="$profile" \
+                -cp 'build/classes:lib/*' \
+                org.workflowsim.examples.planning.FLAFixedMappingReplay \
+                "${{ matrix.workflow }}" 211 "$source_csv" "$arm" 4 \
+                "reports/${label}_${profile}.csv" \
+                > "reports/${label}_${profile}.log" 2>&1
+            done
+          done
+          python3 - <<'PY'
+          import csv, pathlib, statistics
+          root=pathlib.Path('reports')
+          stats=[]
+          for label in ('v12','nsga'):
+              def read(profile):
+                  with (root/f'{label}_{profile}.csv').open(newline='') as f:
+                      return list(csv.DictReader(f))
+              d=read('default');s=read('staggered')
+              assert len(d)==len(s)==4
+              for a,b in zip(d,s):
+                  assert a['mapping']==b['mapping']
+                  assert a['algorithm']==b['algorithm']
+                  assert a['source_candidate_index']==b['source_candidate_index']
+                  assert a['seed']==b['seed']=='211'
+                  p=100*(float(b['fixed_replay_planned_makespan'])/float(a['fixed_replay_planned_makespan'])-1)
+                  t=100*(float(b['fixed_replay_actual_makespan'])/float(a['fixed_replay_actual_makespan'])-1)
+                  cp=100*(float(b['fixed_replay_planned_cost'])/float(a['fixed_replay_planned_cost'])-1)
+                  ct=100*(float(b['fixed_replay_actual_cost'])/float(a['fixed_replay_actual_cost'])-1)
+                  stats.append(dict(workflow=a['workflow'],seed=a['seed'],algorithm=label,
+                      candidate_index=a['source_candidate_index'],mapping=a['mapping'],
+                      planned_makespan_change_pct=p,actual_makespan_change_pct=t,
+                      makespan_speed_effect_error_pp=p-t,
+                      planned_cost_change_pct=cp,actual_cost_change_pct=ct))
+          assert len(stats)==8
+          with (root/'fixed_matched_speed_pairs.csv').open('w',newline='') as f:
+              w=csv.DictWriter(f,fieldnames=list(stats[0]))
+              w.writeheader();w.writerows(stats)
+          with (root/'fixed_matched_speed_report.md').open('w') as f:
+              f.write('# Actual fixed-assignment speed-effect pilot: '+stats[0]['workflow']+'\n\n')
+              f.write('Exactly eight matched assignment pairs, 16 independent WorkflowSim calls. '
+                  'Default replays were asserted against original archived planned/real values; '
+                  'no search optimizers were executed.\n\n')
+              f.write('| Solver | Mean planned makespan change | Mean real makespan change | Mean absolute speed-effect prediction gap |\n'
+                      '|---|---:|---:|---:|\n')
+              for label in ('v12','nsga'):
+                  z=[r for r in stats if r['algorithm']==label]
+                  f.write(f"| {label} | {statistics.mean(x['planned_makespan_change_pct'] for x in z):+.4f}% | "
+                      f"{statistics.mean(x['actual_makespan_change_pct'] for x in z):+.4f}% | "
+                      f"{statistics.mean(abs(x['makespan_speed_effect_error_pp']) for x in z):.4f} pp |\n")
+              f.write('\nDevelopment diagnostic only. Exactly same mapping, but task order and contention may change; '
+                  'not a clean causal decomposition of internal simulation mechanics or proof of FLA superiority.\n')
+          print('PASS 8 exact mapped pairs and 16 new true WorkflowSim replays')
+          PY
+          git rev-parse HEAD > reports/analysis-sha.txt
+          printf 'Frozen originals: GitHub Actions 41626382711\n' > reports/original-run-id.txt
+          cat reports/fixed_matched_speed_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive complete source and exact paired simulator results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixed-speed-${{ matrix.workflow }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
