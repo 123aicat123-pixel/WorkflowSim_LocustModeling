@@ -64,6 +64,8 @@ public final class FLAReadyQueueCrossDagAudit {
         // Validate BEFORE starting any simulation, including the optional
         // single-policy mechanism probe; original 2-argument behavior unchanged.
         for(String policy:policies) mapping(tasks,policy);
+        final boolean priorityPrediction=
+                Boolean.getBoolean("dagfla.priorityAwarePredictionDiagnostic");
         Log.disable();
         try(BufferedWriter out=Files.newBufferedWriter(path,StandardCharsets.UTF_8)) {
             out.write("workflow,speed,seed,policy,task_count,"
@@ -71,7 +73,11 @@ public final class FLAReadyQueueCrossDagAudit {
                     +"old_plan_cost,new_ready_cost,actual_cost,"
                     +"old_start_mae,new_start_mae,old_finish_mae,new_finish_mae,"
                     +"old_makespan_abs_pct,new_makespan_abs_pct,"
-                    +"old_cost_abs_pct,new_cost_abs_pct\n");
+                    +"old_cost_abs_pct,new_cost_abs_pct");
+            if(priorityPrediction)out.write(",runtime_priority,policy_model_makespan,"
+                    +"policy_model_cost,policy_start_mae,policy_finish_mae,"
+                    +"policy_makespan_abs_pct,policy_cost_abs_pct");
+            out.newLine();
             for(String policy:policies) {
                 Map<Integer,Integer> genotype=mapping(tasks,policy);
                 LIWSABenchmarkExample.RunResult real=
@@ -115,7 +121,7 @@ public final class FLAReadyQueueCrossDagAudit {
                     throw new IllegalStateException("Invalid real simulator makespan or cost");
                 out.write(String.format(Locale.ROOT,
                     "%s,%s,509,%s,%d,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,"
-                    +"%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g%n",
+                    +"%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g",
                     workflow,speed,policy,tasks,
                     m.stageInAwareMakespan,m.readyQueueMakespan,real.makespan,
                     m.stageInAwareCost,m.readyQueueCost,real.cost,
@@ -124,6 +130,29 @@ public final class FLAReadyQueueCrossDagAudit {
                     100*Math.abs(m.readyQueueMakespan-real.makespan)/real.makespan,
                     100*Math.abs(m.stageInAwareCost-real.cost)/real.cost,
                     100*Math.abs(m.readyQueueCost-real.cost)/real.cost));
+                if(priorityPrediction) {
+                    if(m.policyForecastStarts==null||m.policyForecastFinishes==null||
+                            m.policyForecastStarts.length!=tasks||
+                            m.policyForecastFinishes.length!=tasks)
+                        throw new IllegalStateException("Incomplete runtime-priority forecast");
+                    double startMae=0,finishMae=0;
+                    for(int k=0;k<tasks;k++){
+                        double[] observed=real.fixedTaskActualTimeline.get(m.traceTaskIds[k]);
+                        if(observed==null)throw new IllegalStateException("Missing actual original task");
+                        startMae+=Math.abs(m.policyForecastStarts[k]-observed[1]);
+                        finishMae+=Math.abs(m.policyForecastFinishes[k]-observed[2]);
+                    }
+                    String runtimePriority=System.getProperty("dagfla.fixedVmReadyPriority","fifo");
+                    if(!(m.policyForecastMakespan>0)||!(m.policyForecastCost>=0))
+                        throw new IllegalStateException("Invalid policy-aware prediction");
+                    out.write(String.format(Locale.ROOT,
+                        ",%s,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g",
+                        runtimePriority,m.policyForecastMakespan,m.policyForecastCost,
+                        startMae/tasks,finishMae/tasks,
+                        100*Math.abs(m.policyForecastMakespan-real.makespan)/real.makespan,
+                        100*Math.abs(m.policyForecastCost-real.cost)/real.cost));
+                }
+                out.newLine();
                 out.flush();
                 System.out.printf(Locale.ROOT,
                     "CROSS_DAG_PASS workflow=%s speed=%s policy=%s old=%.7f%% new=%.7f%%%n",
