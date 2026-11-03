@@ -66,6 +66,17 @@ class StructureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicated"):
             self.run_dax(x)
 
+    def test_negative_file_size_keeps_topology_but_excludes_invalid_bytes(self):
+        xml = FIXTURE.replace('file="p.bin" link="output" size="100"',
+                              'file="p.bin" link="output" size="-9"')
+        result = self.run_dax(xml)
+        self.assertEqual(result["task_count"], 3)
+        self.assertEqual(result["edge_count"], 2)
+        self.assertEqual(result["critical_path_runtime_dax"], 6)
+        self.assertEqual(result["invalid_dax_file_size_references"], 1)
+        self.assertEqual(result["skipped_invalid_edge_file_size_pairs"], 1)
+        self.assertEqual(result["declared_intertask_file_bytes"], 0)
+
     def test_file_size_mismatch_is_diagnostic_not_communication_time(self):
         x = self.run_dax(FIXTURE.replace('file="p.bin" link="input" size="100"',
                                          'file="p.bin" link="input" size="99"'))
