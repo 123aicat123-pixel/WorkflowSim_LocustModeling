@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for variant in v7-costseed v9-colocate v12-bandit v12-hvbandit; do
+          for variant in v7-costseed v9-colocate v11-bandit v12-hvbandit; do
             java -Dworkflowsim.planningStageInAware=true -cp 'build/classes:lib/*' \
               org.workflowsim.examples.planning.FLAResearchExperiment \
               '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
@@ -120,7 +120,7 @@ jobs:
                   novelty[(x['workflow'],x['algorithm'])].append(
                       100*int(x['distinct_observed'])/int(x['captured_evaluations']))
           algs=['DAG-Pareto-FLA[v7-costseed]','DAG-Pareto-FLA[v9-colocate]',
-                'DAG-Pareto-FLA[v12-bandit]','DAG-Pareto-FLA[v12-hvbandit]']
+                'DAG-Pareto-FLA[v11-bandit]','DAG-Pareto-FLA[v12-hvbandit]']
           workflows=sorted({x[0] for x in grouped})
           assert len(grouped)==36 and len(workflows)==3
           refs={}
