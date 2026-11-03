@@ -345,6 +345,9 @@ public class WorkflowScheduler extends DatacenterBroker {
      */
     protected void processCloudletSubmit(SimEvent ev) {
         List<Job> list = (List) ev.getData();
+        if (Boolean.getBoolean("dagfla.fixedEventTrace")) {
+            for (Job job:list) FLATaskEventTrace.emit("SCHEDULER_ARRIVE", job, CloudSim.clock(), -1.0);
+        }
         getCloudletList().addAll(list);
 
         sendNow(this.getId(), WorkflowSimTags.CLOUDLET_UPDATE);
