@@ -1,0 +1,39 @@
+name: Pinned K24 planned plateau versus actual HV risk audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-planned-plateau-risk.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  plateau:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable previous REAL prospective K24 outputs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41592705525
+          github-token: ${{ github.token }}
+          pattern: progressive-*-41592705525
+          path: original-replays
+      - name: Audit planning-only HV gain vs actual prefix-marginal simulator HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_planned_plateau_risk.py original-replays reports \
+            2>&1 | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          printf 'Original prospective K24 real WorkflowSim run: 41592705525\n' > reports/original_run.txt
+          cat reports/planned_plateau_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: planned-plateau-risk-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
