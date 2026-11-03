@@ -300,6 +300,7 @@ public final class WorkflowEngine extends SimEntity {
                  */
                 if (flag) {
                     List submittedList = allocationList.get(job.getUserId());
+                    FLATaskEventTrace.emit("ENGINE_READY", job, org.cloudbus.cloudsim.core.CloudSim.clock(), -1.0);
                     submittedList.add(job);
                     jobsSubmitted++;
                     getJobsSubmittedList().add(job);
