@@ -44,6 +44,29 @@ The earlier smaller-scale pilot on two DAG instances, each default/staggered and
 
 The new confirmation reduces the corresponding mean advantages to +0.292937%, +0.267539% and +1.604945%, with win counts 8/16, 9/16 and 8/16 respectively. **No strong replication of the original DO-timing superiority is established**, despite a small positive overall mean. In fact, Epigenomics_46 and Inspiral_50 generally do worse than v12, while staggered Sipht_100 shows larger gains. Strong negative single cases include Epigenomics_46 staggered seed212 DO vs late **−4.4397%**, vs v12 **−5.3529%**; Inspiral_50 staggered seed212 DO vs v12 **−3.3332%**; positive cases include Sipht_100 staggered seed211/212 DO vs v12 **+8.0265%/+6.0953%**. Every case remains in the original archive.
 
+## Family-cluster uncertainty audit: major no-go for general superiority claims
+
+An independent **read-only**, original-report-artifact [Actions run 41627443794](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41627443794) successfully audited both v17 pilot [41625790444](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41625790444) and this confirmation [41626382711](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41626382711). It took exactly 256 exhaustive resamples with replacement of FOUR family-mean effects, computed a leave-one-family-out sensitivity, and reported exploratory sign-test counts. Original case CSVs were not changed and there were **zero new search evaluations or simulator replays**. Artifact `v17-family-uncertainty-41627443794`, ID `13226118167`.
+
+| Confirmation comparison | Mean true-simulator K16 HV change | Paired scenario wins | Four-family bootstrap 2.5–97.5 percentile | Leave-one-family-out mean range |
+|---|---:|---:|---:|---:|
+| v17 DO-random vs matched late-random | +0.2929% | 8/16 | **[−0.8744%, +1.7785%]** | [−0.4448%, +0.8186%] |
+| v17 DO-random vs v12 | +0.2675% | 9/16 | **[−1.5069%, +2.3242%]** | [−0.8384%, +0.8750%] |
+| v17 DO-random vs seeded NSGA-II | +1.6049% | 8/16 | **[−0.8321%, +4.0420%]** | [+0.4977%, +2.5937%] |
+
+**All three resampling intervals include zero.** These are NOT calibrated confidence intervals with only four distinct families, and are included as descriptive sensitivity, not significance proof. Two-sided exact sign-test exploratory p values were 1.0000 (8/16), 0.8036 (9/16), and 1.0000 (8/16); scenario signs within a family are correlated, so these p values do not meet independent-sample assumptions for family-level inference.
+
+The family averages (both speed profiles and seeds per family) reveal considerable heterogeneity:
+
+| Family | DO random vs matched late | DO random vs v12 | DO random vs NSGA-II |
+|---|---:|---:|---:|
+| CyberShake | +0.3545% | +0.4987% | −1.3614% |
+| Epigenomics | −1.2841% | −1.4590% | +3.1573% |
+| Inspiral | −0.4049% | −1.5548% | −0.3028% |
+| Sipht | +2.5062% | +3.5852% | +4.9266% |
+
+This audit **prevents promoting v17 as a generally better solver** despite its positive pooled arithmetic means. The positive effect is heavily sensitive to the Sipht family, and wins do not consistently favor v17. It is methodologically inappropriate to tune a DAG/VM-specific switch after viewing these four family outcomes and call these same samples unseen validation. The next stage needs genuinely independent workflow-family samples, enough replications per family, and predeclared family-level inferential analysis. Preserve v12 as baseline and leave v17 opt-in.
+
 ## Methodological limitations, publication consequences
 
 1. The confirmation isolates new **workflow size and optimizer seeds**, but ALL DAG families were available in the repository; some had already been studied in prior variants. It is **not** a truly untouched new workflow-family holdout. Only two seeds per DAG/speed are insufficient to establish stochastic algorithm superiority.
