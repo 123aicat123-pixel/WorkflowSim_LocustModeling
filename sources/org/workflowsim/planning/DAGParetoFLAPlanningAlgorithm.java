@@ -76,6 +76,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_JOIN_AWARE_RELOCATION = false;
     /** v14: pair one normal child with one counted true-timeline-guided or random neighbor. */
     public static int CONFIG_PAIRED_LOCAL_SEARCH_MODE = 0; // 0=off,1=random control,2=timeline,3=random sham,4=timeline sham
+    /** Experimental window, default 0=full; 1=DO only; 2=last matching DO-count generations. */
+    public static int CONFIG_PAIRED_ACTIVE_WINDOW=0;
     /** v15: replace strictly dominated local trial in survivor pool with its normal child. */
     public static boolean CONFIG_PARETO_GATED_LOCAL_SURVIVOR = false;
     /** Passive per-generation selected-population diagnostics, OFF by default. */
@@ -154,7 +156,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useNoveltyRepair, useGlobalHistory, useStrongRepair;
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
-    private final int edgeRelocationMode, criticalRelocationMode, pairedLocalSearchMode;
+    private final int edgeRelocationMode, criticalRelocationMode, pairedLocalSearchMode,pairedActiveWindow;
     private final boolean paretoGatedLocalSurvivor, collectPopulationDiagnostics;
     private final boolean usePhaseOperatorBandit, usePhaseHvBandit, useJoinAwareRelocation;
     private final List<Map<Integer,Integer>> seedMaps;
@@ -216,6 +218,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         usePhaseHvBandit = CONFIG_PHASE_HV_BANDIT;
         useJoinAwareRelocation = CONFIG_JOIN_AWARE_RELOCATION;
         pairedLocalSearchMode=CONFIG_PAIRED_LOCAL_SEARCH_MODE;
+        pairedActiveWindow=CONFIG_PAIRED_ACTIVE_WINDOW;
+        if(pairedActiveWindow<0 || pairedActiveWindow>2 ||
+                (pairedLocalSearchMode==0 && pairedActiveWindow!=0))
+            throw new IllegalArgumentException("Invalid paired generation window");
         paretoGatedLocalSurvivor=CONFIG_PARETO_GATED_LOCAL_SURVIVOR;
         collectPopulationDiagnostics=CONFIG_POPULATION_DIAGNOSTICS;
         if(paretoGatedLocalSurvivor && pairedLocalSearchMode==0)
@@ -320,13 +326,15 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             } else {
                 generationVisited = null;
             }
+            final boolean pairedGenerationActive=pairedLocalSearchMode!=0 &&
+                    FLAPairedSearchWindow.active(pairedActiveWindow,t,generations,phase);
             FLAScheduleEvaluator.ScheduleTrace precedingTrace=null;
             Solution precedingNormal=null;
             for (int i = 0; i < populationSize; i++) {
                 Solution current = parents.get(i);
                 boolean isG1 = i < group1Size;
                 final int withinGroupIndex=isG1?i:(i-group1Size);
-                boolean localTrial=pairedLocalSearchMode!=0 && withinGroupIndex%2==1;
+                boolean localTrial=pairedGenerationActive && withinGroupIndex%2==1;
                 if(localTrial) {
                     if(precedingTrace==null || precedingNormal==null)
                         throw new IllegalStateException("Missing directly preceding v14 normal child");
@@ -438,12 +446,12 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 // compare to the ONE normal stage-in-aware evaluated result.
                 final double predictedCriticalMakespan = criticalRelocationMode != 0
                         ? approximateMakespan(genes,null) : Double.NaN;
-                FLAScheduleEvaluator.ScheduleTrace localTrace=pairedLocalSearchMode!=0
+                FLAScheduleEvaluator.ScheduleTrace localTrace=pairedGenerationActive
                         ? evaluator.evaluateWithTrace(genes) : null;
                 Solution child = new Solution(genes,localTrace!=null
                         ? new double[]{localTrace.makespan,localTrace.cost}
                         : evaluator.evaluate(genes));
-                if(pairedLocalSearchMode!=0) {
+                if(pairedGenerationActive) {
                     precedingNormal=child;
                     precedingTrace=localTrace;
                 }
@@ -600,6 +608,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     "FLA_PAIRED_LOCAL mode=%d trials=%d changed=%d dominates=%d dominated=%d incomparable=%d gate=%d rejected=%d evaluations=%d%n",
                     pairedLocalSearchMode,localTrials,localChanged,localDominates,localDominated,
                     localIncomparable,paretoGatedLocalSurvivor?1:0,localGateRejected,m.objectiveEvaluations);
+        if(pairedActiveWindow!=0)
+            System.out.printf(java.util.Locale.ROOT,
+                    "FLA_PAIRED_WINDOW mode=%d activeGenerations=%d localTrials=%d normalBanditSlots=%d%n",
+                    pairedActiveWindow,FLAPairedSearchWindow.activeGenerationCount(pairedActiveWindow,generations),
+                    localTrials,populationSize*generations-localTrials);
         if(useJoinAwareRelocation)
             System.out.printf(java.util.Locale.ROOT,
                     "FLA_JOIN_AWARE attempted=%d changed=%d evaluations=%d%n",
