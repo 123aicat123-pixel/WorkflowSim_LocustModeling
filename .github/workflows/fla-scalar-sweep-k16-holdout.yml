@@ -55,7 +55,7 @@ jobs:
             'Output&Results/scalar-sweep_${{ matrix.workflow }}_s${{ matrix.seed }}' \
             v12-fair-pair 2>&1 | tee ci-logs/scalar-sweep.log
           grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/scalar-sweep.log
-          test "$(grep -c 'PASS prospective planned-only scalar-sweep replay selection K=16' ci-logs/random.log)" -eq 3
+          test "$(grep -c 'PASS prospective planned-only scalar-sweep replay selection K=16' ci-logs/scalar-sweep.log)" -eq 3
       - name: Assert same optimizer histories and true simulator budgets
         shell: bash
         run: |
