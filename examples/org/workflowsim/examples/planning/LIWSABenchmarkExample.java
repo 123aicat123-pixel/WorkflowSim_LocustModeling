@@ -670,14 +670,48 @@ public class LIWSABenchmarkExample {
         return answer;
     }
 
+    /**
+     * Optional within-tier synthetic VM compute-speed heterogeneity for
+     * cross-configuration research. No default configuration is changed.
+     * Each original tier has four instances; "staggered" yields deterministic
+     * MIPS multipliers 0.65, 0.80, 0.90 and 1.00 within each tier.
+     * Baseline per-tier prices are preserved; slower instances are not
+     * rewarded with a cheaper rental price unless an existing explicit
+     * liwsa.vmPriceProfile property is also selected.
+     *
+     * All factors are <= 1 so every VM fits the existing 2000 MIPS host PE.
+     */
+    static double vmMips(double nominal, int withinTierIndex) {
+        String profile=System.getProperty("liwsa.vmSpeedProfile","default");
+        double factor;
+        switch(profile) {
+            case "default": factor=1.0; break;
+            case "staggered":
+                switch(withinTierIndex % 4) {
+                    case 0: factor=0.65; break;
+                    case 1: factor=0.80; break;
+                    case 2: factor=0.90; break;
+                    default: factor=1.00; break;
+                }
+                break;
+            default: throw new IllegalArgumentException("Unknown VM speed profile: "+profile);
+        }
+        double mips=nominal*factor;
+        if(!Double.isFinite(mips)||mips<=0||mips>2000)
+            throw new IllegalStateException("Invalid VM MIPS for speed profile");
+        return mips;
+    }
+
     static List<CondorVM> createVMs(int userId) {
         LinkedList<CondorVM> list = new LinkedList<>();
         int vmId = 0;
         for (double[] type : VM_TYPES) {
-            double mips = type[0]; long bw = (long) type[1];
-            double cost = vmPrice(mips,type[2]); int ram = (int) type[3];
+            double nominalMips = type[0]; long bw = (long) type[1];
+            int ram = (int) type[3];
             long storage = (long) type[4]; int count = (int) type[5];
             for (int k = 0; k < count; k++) {
+                double mips=vmMips(nominalMips,k);
+                double cost=vmPrice(mips,type[2]);
                 list.add(new CondorVM(vmId++, userId, mips, 1, ram, bw, storage,
                     "Xen", cost, 0.0, 0.0, 0.0, new CloudletSchedulerSpaceShared()));
             }
