@@ -1,0 +1,102 @@
+name: v17 FLA DO-only versus Late-74 K16 Match
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v17-phase-pilot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compare:
+    name: v17 ${{ matrix.workflow }} ${{ matrix.speed }} s${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        workflow: [Epigenomics_24, Inspiral_30]
+        speed: [default, staggered]
+        seed: [191, 192, 193]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile and test exact 74-generation matched opportunity masks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD > ci-logs/source_sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FLAPairedSearchWindowTest
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FLAPopulationDiagnosticsTest
+          java -Dworkflowsim.planningStageInAware=true -cp 'build/classes:lib/*' org.workflowsim.planning.TimelineParetoNeighborTest
+      - name: Eight arms with 3030 counted target evaluations and K16 true WorkflowSim
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.populationDiagnostics=true \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            "Output&Results/v17-phase-${{ matrix.speed }}-${{ matrix.workflow }}-s${{ matrix.seed }}" \
+            v17-phase-eightarm 2>&1 | tee ci-logs/experiment.log
+          test "$(grep -c 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/experiment.log)" -eq 7
+          test "$(grep -c 'FLA_PAIRED_WINDOW mode=' ci-logs/experiment.log)" -eq 4
+          python3 - <<'PY'
+          import csv,pathlib,re
+          log=pathlib.Path('ci-logs/experiment.log').read_text()
+          w=[tuple(map(int,x)) for x in re.findall(r'FLA_PAIRED_WINDOW mode=(\d+) activeGenerations=(\d+) localTrials=(\d+) normalBanditSlots=(\d+)',log)]
+          assert sorted(w)==[(1,74,1036,1964)]*2+[(2,74,1036,1964)]*2,w
+          p=pathlib.Path('Output&Results/v17-phase-${{ matrix.speed }}-${{ matrix.workflow }}-s${{ matrix.seed }}')
+          with pathlib.Path(str(p)+'_summary.csv').open(newline='') as f:s=list(csv.DictReader(f))
+          with pathlib.Path(str(p)+'_replays.csv').open(newline='') as f:r=list(csv.DictReader(f))
+          with pathlib.Path(str(p)+'_population_diagnostics.csv').open(newline='') as f:t=list(csv.DictReader(f))
+          assert len(s)==8 and len(r)==128 and len(t)==707
+          assert all(int(x['evaluations'])==int(x['captured_evaluations'])==3030 and int(x['replayed'])==16 for x in s)
+          print('PASS v17 eight arms equal 3030 planned evaluations, DO/late 1036-local parity and K16 actual simulator')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-${{ matrix.workflow }}-${{ matrix.speed }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/*_summary.csv
+            Output&Results/*_replays.csv
+            Output&Results/*_population_diagnostics.csv
+            Output&Results/*_budget_protocol.txt
+          retention-days: 90
+  report:
+    needs: compare
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v17-*-${{ github.run_id }}
+          path: original
+      - name: Audit all eight real WorkflowSim Pareto fronts with planned-only frozen reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v17_phase_report.py
+          python3 scripts/fla_v17_phase_report.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis_source_sha.txt
+          cat reports/v17_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v17-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
