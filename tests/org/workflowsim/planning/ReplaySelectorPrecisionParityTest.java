@@ -57,6 +57,7 @@ public final class ReplaySelectorPrecisionParityTest {
         }
         if (cases.size() != 4) throw new IllegalStateException("Expected four stress fixtures, got " + cases.size());
         for (Map.Entry<String,List<Object>> group : cases.entrySet()) {
+            String priorCoverageIds = null;
             for (int k : new int[]{8,16,24,32}) {
                 @SuppressWarnings("unchecked")
                 List<Object> chosen = (List<Object>) selection.invoke(null, group.getValue(), k);
@@ -68,6 +69,11 @@ public final class ReplaySelectorPrecisionParityTest {
                     if (ids.length() != 0) ids.append(",");
                     ids.append(mapping.get(1));
                 }
+                if(priorCoverageIds!=null && !ids.toString().startsWith(priorCoverageIds+",")) {
+                    throw new IllegalStateException("Pareto coverage not prefix-nested on "+
+                            group.getKey()+" budget "+k+": "+priorCoverageIds+" -> "+ids);
+                }
+                priorCoverageIds=ids.toString();
                 System.out.println("PARITY|" + group.getKey() + "|" + k + "|" + ids);
                 @SuppressWarnings("unchecked")
                 List<Object> swept = (List<Object>) scalarSelection.invoke(null, group.getValue(), k);
