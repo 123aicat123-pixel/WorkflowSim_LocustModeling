@@ -1,0 +1,88 @@
+name: FLA Algorithm-Independent 16-Mapping True WorkflowSim Ranking
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-independent-mapping-universe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  frozen-unselected-genotypes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        workflow: [CyberShake_30, Epigenomics_46, Montage_50]
+        vm_speed: [default, staggered]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean Java compile, 16 mapping parity and existing decoder oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > reports/all-java-sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/all-java-sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAAlgorithmIndependentMappingUniverseTest | tee reports/frozen-mapping-test.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-queue-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/stagein-oracle.log
+      - name: Replay 16 precommitted same genotypes and independently forecast StageIn/READY before truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.fixedTaskTrace=true \
+            -Ddagfla.readyQueueDiagnostic=true \
+            -Ddagfla.priorityAwarePredictionDiagnostic=false \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile='${{ matrix.vm_speed }}' \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAAlgorithmIndependentMappingUniverse \
+            '${{ matrix.workflow }}' reports/same_mapping_true_replays.csv \
+            > reports/experiment.log 2>&1 || {
+              tail -110 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math
+          with open('reports/same_mapping_true_replays.csv',newline='') as f:
+              z=list(csv.DictReader(f))
+          names={'all_vm0','all_vm12','round_robin','stride7',
+              'evenodd_vm0_vm12','block4_vm0_vm12','four_vm_round','four_vm_block5',
+              'vm0_vm12_skew75','vm12_vm15_skew75','prime_step5','prime_step11',
+              'hash_seed17','hash_seed97','monotonic_vm16','reverse_monotonic_vm16'}
+          assert len(z)==16 and {x['mapping_policy'] for x in z}==names
+          assert len({x['task_vm_mapping'] for x in z})==16
+          for x in z:
+              assert (x['workflow'],x['vm_profile'],x['seed'])==(
+                  '${{ matrix.workflow }}','${{ matrix.vm_speed }}','1501')
+              count=int(x['task_count'])
+              assignments=x['task_vm_mapping'].split('|')
+              assert len(assignments)==count
+              mapping=dict(tuple(map(int,y.split(':'))) for y in assignments)
+              assert set(mapping)==set(range(1,count+1))
+              assert all(0<=vm<16 for vm in mapping.values())
+              for col in ('old_planned_makespan','old_planned_cost',
+                   'ready_planned_makespan','ready_planned_cost',
+                   'actual_makespan','actual_cost','old_start_mae',
+                   'ready_start_mae','old_finish_mae','ready_finish_mae'):
+                  assert math.isfinite(float(x[col]))
+                  assert float(x[col])>0 if 'mae' not in col else float(x[col])>=0,(col,x)
+          print('PASS EXACTLY 16 different algorithm-independent mappings, two source forecast models, real exact TaskID/VM traces')
+          PY
+          printf 'DAG=%s seed=1501 vm_speed=%s actual_priority=fifo mappings=16 selection=none\n' \
+             '${{ matrix.workflow }}' '${{ matrix.vm_speed }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_ALGORITHM_INDEPENDENT_SAME_MAPPING_RANK_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+      - name: Preserve unfiltered original real simulator labels, both frozen predictions and source provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-algorithm-independent-${{ matrix.workflow }}-${{ matrix.vm_speed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
