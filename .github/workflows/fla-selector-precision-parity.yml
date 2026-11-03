@@ -1,4 +1,5 @@
 name: Cross-language precision parity for prospective FLA replay selector
+# Re-run on selector semantic fix; also serves as a standalone regression entry point.
 on:
   push:
     branches: [fla-baseline]
