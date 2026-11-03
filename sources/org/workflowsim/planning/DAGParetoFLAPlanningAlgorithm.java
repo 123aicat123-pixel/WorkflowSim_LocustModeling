@@ -76,6 +76,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_JOIN_AWARE_RELOCATION = false;
     /** v14: pair one normal child with one counted true-timeline-guided or random neighbor. */
     public static int CONFIG_PAIRED_LOCAL_SEARCH_MODE = 0; // 0=off,1=random control,2=timeline
+    /** v15: replace strictly dominated local trial in survivor pool with its normal child. */
+    public static boolean CONFIG_PARETO_GATED_LOCAL_SURVIVOR = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -149,6 +151,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
     private final int edgeRelocationMode, criticalRelocationMode, pairedLocalSearchMode;
+    private final boolean paretoGatedLocalSurvivor;
     private final boolean usePhaseOperatorBandit, usePhaseHvBandit, useJoinAwareRelocation;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
@@ -174,7 +177,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private double alpha1 = 0.85;
     private int doCount, eoCount, ssoCount, edgeChangeCount, criticalChangeCount;
     private int joinRelocationAttempts, joinRelocationChanges;
-    private int localTrials, localChanged, localDominates, localDominated, localIncomparable;
+    private int localTrials, localChanged, localDominates, localDominated, localIncomparable,localGateRejected;
 
     public DAGParetoFLAPlanningAlgorithm() {
         populationSize = CONFIG_POPULATION_SIZE;
@@ -207,6 +210,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         usePhaseHvBandit = CONFIG_PHASE_HV_BANDIT;
         useJoinAwareRelocation = CONFIG_JOIN_AWARE_RELOCATION;
         pairedLocalSearchMode=CONFIG_PAIRED_LOCAL_SEARCH_MODE;
+        paretoGatedLocalSurvivor=CONFIG_PARETO_GATED_LOCAL_SURVIVOR;
+        if(paretoGatedLocalSurvivor && pairedLocalSearchMode==0)
+            throw new IllegalArgumentException("Pareto local gate requires paired local trials");
         if(pairedLocalSearchMode<0 || pairedLocalSearchMode>2)
             throw new IllegalArgumentException("Unsupported paired local search mode");
         if(useJoinAwareRelocation && !usePhaseHvBandit)
@@ -252,7 +258,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         archive.clear(); searchTrace.clear(); criticalProxyPairs.clear();
         doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0;
         joinRelocationAttempts=0; joinRelocationChanges=0;
-        localTrials=0;localChanged=0;localDominates=0;localDominated=0;localIncomparable=0;alpha1 = 0.85;
+        localTrials=0;localChanged=0;localDominates=0;localDominated=0;localIncomparable=0;localGateRejected=0;alpha1 = 0.85;
         for(int phase=0;phase<3;phase++) {
             Arrays.fill(banditUses[phase],0);
             Arrays.fill(banditAdmissions[phase],0);
@@ -330,8 +336,14 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     if(dominates(trial,precedingNormal))localDominates++;
                     else if(dominates(precedingNormal,trial))localDominated++;
                     else localIncomparable++;
+                    // All evaluated genotypes still enter the recorder and archive
+                    // admission check. Only the next-generation candidate slot is
+                    // protected from a strictly Pareto-dominated paired neighbor.
                     archiveConsider(trial);
-                    (isG1?children1:children2).add(trial);
+                    if(paretoGatedLocalSurvivor && dominates(precedingNormal,trial)) {
+                        localGateRejected++;
+                        (isG1?children1:children2).add(precedingNormal);
+                    } else (isG1?children1:children2).add(trial);
                     precedingNormal=null;
                     precedingTrace=null;
                     continue;
@@ -547,9 +559,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     m.banditArmArchiveAdmissions[0],m.banditArmArchiveAdmissions[1],m.banditArmArchiveAdmissions[2]);
         if(pairedLocalSearchMode!=0)
             System.out.printf(java.util.Locale.ROOT,
-                    "FLA_PAIRED_LOCAL mode=%d trials=%d changed=%d dominates=%d dominated=%d incomparable=%d evaluations=%d%n",
+                    "FLA_PAIRED_LOCAL mode=%d trials=%d changed=%d dominates=%d dominated=%d incomparable=%d gate=%d rejected=%d evaluations=%d%n",
                     pairedLocalSearchMode,localTrials,localChanged,localDominates,localDominated,
-                    localIncomparable,m.objectiveEvaluations);
+                    localIncomparable,paretoGatedLocalSurvivor?1:0,localGateRejected,m.objectiveEvaluations);
         if(useJoinAwareRelocation)
             System.out.printf(java.util.Locale.ROOT,
                     "FLA_JOIN_AWARE attempted=%d changed=%d evaluations=%d%n",
