@@ -124,7 +124,9 @@ def audit(source,out):
         ideal_hv30=hv(true,reference30)
         true_nd=ndidx(true)
         for r in ordered:
-            raw.append(dict(workflow=dag,vm_speed=speed,**r))
+            record=dict(r)
+            record["vm_speed"]=speed
+            raw.append(record)
         for model in MODELS:
             planned=[(float(r[f"{model}_planned_makespan"]),
                       float(r[f"{model}_planned_cost"])) for r in ordered]
