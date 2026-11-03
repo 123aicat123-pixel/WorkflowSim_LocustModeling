@@ -117,6 +117,8 @@ public class LIWSABenchmarkExample {
         long searchWallClockMillis;
         long simWallClockMillis;
         Map<Integer, Integer> assignment;  // cloudletId -> vmId, for warm-start seeding
+        /** Opt-in detached raw actual compute-job timing by original task ID. */
+        Map<Integer, double[]> fixedTaskActualTimeline;
     }
 
     private static class Stats {
@@ -594,6 +596,25 @@ public class LIWSABenchmarkExample {
             r.seed = seed;
             r.simWallClockMillis = simWall;
             r.assignment = buildAssignmentMap(jobs);
+            if(Boolean.getBoolean("dagfla.fixedTaskTrace")) {
+                r.fixedTaskActualTimeline=new java.util.TreeMap<>();
+                for(Job job:jobs) {
+                    if(job.getClassType()!=Parameters.ClassType.COMPUTE.value)continue;
+                    if(job.getTaskList()==null || job.getTaskList().size()!=1)
+                        throw new IllegalStateException("Fixed-task trace expects unclustered one-task compute jobs");
+                    org.workflowsim.Task task=job.getTaskList().get(0);
+                    double start=job.getExecStartTime(),finish=job.getFinishTime();
+                    double cpu=job.getActualCPUTime();
+                    if(!Double.isFinite(start)||!Double.isFinite(finish)||!Double.isFinite(cpu)||
+                            start<0||finish<start||cpu<0)
+                        throw new IllegalStateException("Invalid raw actual job timing task="+task.getCloudletId());
+                    if(r.fixedTaskActualTimeline.put(task.getCloudletId(),
+                            new double[]{job.getVmId(),start,finish,cpu,task.getCloudletTotalLength()})!=null)
+                        throw new IllegalStateException("Repeated original task ID in actual replay");
+                }
+                if(r.fixedTaskActualTimeline.size()!=r.assignment.size())
+                    throw new IllegalStateException("Actual trace task coverage mismatch");
+            }
 
             double fastestMips = 0;
             for (double[] t : VM_TYPES) { fastestMips = Math.max(fastestMips, t[0]); }
