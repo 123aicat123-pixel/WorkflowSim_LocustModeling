@@ -373,3 +373,32 @@ The fair-NSGA result under original prices in the separate five-family/five-seed
 [Original logs, complete 18 paired WorkflowSim replays, equal-seed assertions, and frozen-reference per-profile CSVs](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41564175609).
 
 The research branch remains isolated from `master`; no identity between GitHub and the user's local working tree has been verified.
+
+
+## Two-by-two cost-initialization factorial: separating initialization from solver (2026-11-03)
+
+We added a *controlled four-arm comparison* to avoid inferring that low-cost warm-start benefits are FLA-specific. The `costseed-factorial` mode runs the four arms within the same real WorkflowSim experimental session:
+
+1. **DAG-Pareto-FLA v6-pop**, no cost-efficient seeds.
+2. **DAG-Pareto-FLA v7-costseed**, two task-to-VM cost-efficient seeds.
+3. **Canonical unseeded NSGA-II**.
+4. **NSGA-II[costseed]**, with the SAME first two task-to-VM seeds as v7.
+
+All four search arms use 3030 actual objective evaluations, the same stage-in-aware cost/time evaluator, and simulator replay of each recorded planned-nondominated solution. The implementation checks exact equality of the two deterministic seed assignments for arms 2 and 4. Every solver/seed in a DAG shares one frozen simulator-HV reference point. The default optimizers are NOT silently reconfigured.
+
+**Factorial development pilot:** CyberShake_100, Montage_100, Sipht_100 × 3 seeds (9 paired cases).
+
+| 100-task DAG | Within FLA: v7 vs v6 seed benefit | Within NSGA-II: seed benefit | v7 versus identically seeded NSGA-II |
+|---|---:|---:|---:|
+| CyberShake_100 | +6.343% | +6.852% | −1.368% |
+| Montage_100 | +35.408% | +19.681% | +3.027% |
+| Sipht_100 | +4.304% | −2.899% | −0.473% |
+| **Pooled nine cases** | **+15.352%** | **+7.878%** | **+0.395%** |
+
+The mean paired percentage improvement from the common seeds is larger within FLA than within NSGA-II in this three-family development pilot (+7.474 percentage-point difference-of-benefits), but the FLA and NSGA-II algorithms remain **essentially tied when both seeded** (+0.395% pooled; this is not a statistical superiority claim). This result is consistent with previously documented full-five-family matched-seed validation where v7 was **−0.695%** and won 9/25. Seed benefit is workload-specific and not necessarily positive for every solver (NSGA-II on Sipht).
+
+**Important:** these are four observed search outcomes, not a formal ANOVA interaction. Initialization changes downstream stochastic trajectories. A follow-up two-family factorial with the same untouched variant code (Epigenomics_100 and Inspiral_100) was triggered separately; do not extrapolate this development result to those families until its Actions logs and CSV confirm completion.
+
+[Four-arm live WorkflowSim factorial results, cost-seed identity assertion, and common-reference HV CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41564848874).
+
+No evidence so far proves that v7 has a general FLA-specific advantage over a properly initialized NSGA-II.
