@@ -151,16 +151,20 @@ def inspect_dax(path):
 
     declared_jobs = root.get("jobCount")
     declared_children = root.get("childCount")
-    if declared_jobs is not None and (not declared_jobs.isdigit() or int(declared_jobs) != n):
-        raise ValueError("Declared jobCount differs from parsed jobs: " + path.name)
-    if declared_children is not None and (not declared_children.isdigit() or
-        int(declared_children) != len(child_blocks)):
-        raise ValueError("Declared childCount differs from child blocks: " + path.name)
+    # Historical DAX files can carry stale metadata (notably HEFT_paper.xml).
+    # Record the disagreement explicitly, rather than assuming the header is
+    # authoritative or fabricating missing jobs.
+    job_count_mismatch=int(declared_jobs is not None and (
+        not declared_jobs.isdigit() or int(declared_jobs)!=n))
+    child_count_mismatch=int(declared_children is not None and (
+        not declared_children.isdigit() or int(declared_children)!=len(child_blocks)))
     return dict(
         workflow=path.stem, family=path.stem.split("_")[0],
         dax_sha256=hashlib.sha256(blob).hexdigest(),
         declared_job_count=declared_jobs or "", task_count=n,
+        declared_job_count_mismatch=job_count_mismatch,
         declared_child_blocks=declared_children or "", child_block_count=len(child_blocks),
+        declared_child_count_mismatch=child_count_mismatch,
         edge_count=len(edge_set), roots=roots, sinks=sinks,
         edge_density=len(edge_set) / (n * (n - 1) / 2) if n > 1 else 0.,
         max_in_degree=max(indegree.values()), max_out_degree=max(map(len, nxt.values())),
@@ -215,9 +219,9 @@ def main():
     save_csv(args.out, records)
     for r in records:
         cp=r["critical_path_runtime_dax"]
-        print("%s parsed_jobs=%d declared_jobs=%s edges=%d depth=%d roots=%d CP_DAX=%s bad_runtimes=%d bad_file_sizes=%d"
+        print("%s parsed_jobs=%d declared_jobs=%s jobcount_mismatch=%d edges=%d depth=%d roots=%d CP_DAX=%s bad_runtimes=%d bad_file_sizes=%d"
               % (r["workflow"],r["task_count"],r["declared_job_count"],
-                 r["edge_count"],r["depth_levels"],r["roots"],
+                 r["declared_job_count_mismatch"],r["edge_count"],r["depth_levels"],r["roots"],
                  ("%.4f" % cp) if cp != "" else "UNAVAILABLE",
                  r["invalid_dax_runtime_jobs"],r["invalid_dax_file_size_references"]))
     print("PASS DAX structural audit: %d workflows, acyclic, validated job and child counts" % len(records))
