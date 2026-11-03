@@ -1,4 +1,5 @@
 name: Four-draw prospective K16 random baseline replication
+# Frozen-reference analysis script is checked out at the same source SHA.
 on:
   push:
     branches: [fla-baseline]
