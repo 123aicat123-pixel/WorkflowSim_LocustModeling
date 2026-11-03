@@ -131,6 +131,11 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
         public double stageInAwareTotalSeconds;
         public double stageInAwareExternalSeconds;
         public double stageInAwareIntermediateSeconds;
+        /** Optional detached fixed-genotype planning task timeline, for passive diagnostics ONLY. */
+        public int[] traceTaskIds;
+        public int[] traceVmIds;
+        public double[] tracePlannedStarts;
+        public double[] tracePlannedFinishes;
         public int paretoFrontSize;
         /** Each element is {makespan, cost} for one member of the final Pareto front. */
         public List<double[]> paretoFrontPoints;
@@ -358,6 +363,17 @@ public class LIWSAPlanningAlgorithm extends BasePlanningAlgorithm {
         metrics.stageInAwareTotalSeconds = stageInPrediction.stageInSeconds;
         metrics.stageInAwareExternalSeconds = stageInPrediction.externalStageInSeconds;
         metrics.stageInAwareIntermediateSeconds = stageInPrediction.intermediateStageInSeconds;
+        if (Boolean.getBoolean("dagfla.fixedTaskTrace")) {
+            int traceN=taskOrder.size();
+            metrics.traceTaskIds=new int[traceN];
+            metrics.traceVmIds=new int[traceN];
+            metrics.tracePlannedStarts=stageInPrediction.starts.clone();
+            metrics.tracePlannedFinishes=stageInPrediction.finishes.clone();
+            for(int k=0;k<traceN;k++) {
+                metrics.traceTaskIds[k]=taskOrder.get(k).getCloudletId();
+                metrics.traceVmIds[k]=vmList.get(commitGenotype[k]).getId();
+            }
+        }
         lastRun = metrics;
 
         commitAssignment(commitGenotype);
