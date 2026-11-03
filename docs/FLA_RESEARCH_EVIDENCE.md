@@ -402,3 +402,24 @@ The mean paired percentage improvement from the common seeds is larger within FL
 [Four-arm live WorkflowSim factorial results, cost-seed identity assertion, and common-reference HV CSV](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41564848874).
 
 No evidence so far proves that v7 has a general FLA-specific advantage over a properly initialized NSGA-II.
+
+
+## Held-out factorial cost-seed verification: two additional 100-task families
+
+The same frozen FLA v6/v7/NSGA-II/seeded NSGA-II four-arm 2×2 experiment was repeated on two *additional* 100-task DAX instances, Epigenomics_100 and Inspiral_100, seeds 1–3. They were not used for choosing v7 in the preceding three-family factorial but had been studied earlier in other experiments; they do **not** constitute an entirely fresh publication holdout.
+
+All six paired jobs and the aggregate passed after an initial workflow-only CSV output-prefix mistake was fixed. The earlier failed workflow `41565463657` resulted from the mismatched prefix between the command's written CSV and the assertion's expected file. It was **not** an algorithm or evaluator failure. The corrected workflow `41565588764` compiled and ran all 24 solver evaluations with exactly 3030 fitness calls per arm, verified the identical two low-cost seed assignments, independently replayed all planned-nondominated candidates in WorkflowSim, and recomputed a single frozen reference per DAG family for all four arms.
+
+| 100-task family | FLA seed benefit (v7 vs v6) | NSGA-II seed benefit | v7 minus identical-seed NSGA-II |
+|---|---:|---:|---:|
+| Epigenomics_100 | −1.990% | +0.911% | −0.995% |
+| Inspiral_100 | +7.592% | +12.986% | −1.742% |
+| **Six holdout pairs** | **+2.801%** | **+6.948%** | **−1.368%** |
+
+Unlike the 3-family development factorial (+0.395% v7 versus equally seeded NSGA-II over 9 pairs), these two other families favor **equally seeded NSGA-II**. Combining the development and the held-out-for-factorial 15 cases as a purely *descriptive* equal-weight average gives approximately **−0.310%** v7 versus equally seeded NSGA-II. This is **not** a pooled 5-family, 5-seed confirmation and does not overturn the previously completed full five-family 25-case result (v7 −0.695%, 9/25 wins).
+
+The relative benefit of giving low-cost seeds to FLA is also not stable across workflows: it is negative for Epigenomics_100. The between-algorithm difference remains small, workflow-dependent, and statistically unresolved. This is not evidence that v7's optimization operators beat NSGA-II.
+
+[Six corrected held-out factorial runs, identical-seed assertion, exact evaluation counts, full replay CSV and report](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41565588764).
+
+This finding reinforces the publication constraint: **cost-efficient initialization is a useful transferable heuristic but not, by itself, a demonstrated FLA-specific search contribution**. Both variants should remain separately labeled, and the negative result must be retained.
