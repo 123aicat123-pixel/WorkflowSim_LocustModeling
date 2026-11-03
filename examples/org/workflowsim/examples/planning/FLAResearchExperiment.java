@@ -279,6 +279,8 @@ public final class FLAResearchExperiment {
                 "v7-costseed".equals(variant) || "v7-both".equals(variant) || variant.startsWith("v8") || variant.startsWith("v9") || variant.startsWith("v10");
         DAGParetoFLAPlanningAlgorithm.CONFIG_COST_EXTREME_GUIDANCE =
                 "v7-extreme".equals(variant) || "v7-both".equals(variant) || "v8-dual-guide".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_CRITICAL_LOCAL_AUDIT =
+                Boolean.getBoolean("dagfla.criticalLocalAudit");
         DAGParetoFLAPlanningAlgorithm.CONFIG_CRITICAL_RELOCATION_MODE =
                 "v10-critical".equals(variant) ? 1 : "v10-guarded".equals(variant) ? 2 : 0;
         DAGParetoFLAPlanningAlgorithm.CONFIG_EDGE_RELOCATION_MODE =
