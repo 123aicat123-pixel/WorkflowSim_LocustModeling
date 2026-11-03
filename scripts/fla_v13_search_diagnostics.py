@@ -30,7 +30,7 @@ def run(root,out):
                 assert len(trace)==48,p
                 logs=list(root.rglob("ci-logs/source_sha.txt"))
                 # Each job artifact has its own checkout provenance.
-                parent=files["_summary.csv"][0].parent
+                parent=files["_summary.csv"][0].parent.parent
                 source=parent/"ci-logs/source_sha.txt"
                 assert source.is_file() and source.read_text().strip()==SOURCE,(p,str(source))
                 log=parent/"ci-logs/search.log"
