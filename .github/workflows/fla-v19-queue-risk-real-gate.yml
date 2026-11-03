@@ -1,0 +1,98 @@
+name: FLA v19 Critical Ready-Queue Risk Gate vs v12 v18 and Seeded NSGA-II
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v19-queue-risk-real-gate.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-four-arm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Inspiral_100, Sipht_100]
+        seed: [901, 902]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean compile and v19 physical conflict hand oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.QueueConflictRiskRelocationTest | tee reports/v19-queue-risk-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueuePriorityForecastTest | tee reports/priority-prediction-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-queue-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/insertion-oracle.log
+      - name: Run equal StageInAware v12 v18 v19 and seeded NSGA-II prospective K16 actual simulations
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.priorityAwareSearch=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=staggered \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v19-queue-risk-four-arm > reports/experiment.log 2>&1 || {
+              tail -110 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,re,pathlib
+          def read(path):
+            with open(path,newline='') as f:return list(csv.DictReader(f))
+          summary=read('reports/research_summary.csv')
+          replay=read('reports/research_replays.csv')
+          expected={'DAG-Pareto-FLA[v12-hvbandit]','DAG-Pareto-FLA[v18-disagreement]',
+                    'DAG-Pareto-FLA[v19-queue-risk]','NSGA-II[costseed]'}
+          assert len(summary)==4 and len(replay)==64,(len(summary),len(replay))
+          assert {s['algorithm'] for s in summary}==expected
+          for s in summary:
+            assert s['workflow']=='${{ matrix.workflow }}' and int(s['seed'])==${{ matrix.seed }}
+            assert tuple(int(s[k]) for k in ('population','generations','evaluations',
+                'captured_evaluations','replayed'))==(30,100,3030,3030,16),s
+            z=sorted((x for x in replay if x['algorithm']==s['algorithm']),
+                key=lambda x:int(x['candidate_index']))
+            assert len(z)==16 and [int(x['candidate_index']) for x in z]==list(range(1,17))
+            assert len({x['mapping'] for x in z})==16
+            for x in z:
+              assert x['workflow']=='${{ matrix.workflow }}' and int(x['seed'])==${{ matrix.seed }}
+              for col in ('sim_makespan','sim_cost','planned_makespan','planned_cost'):
+                assert math.isfinite(float(x[col])) and float(x[col])>0,(s['algorithm'],col,x)
+            for col in ('search_ms','selection_ms','replay_ms'):
+              assert math.isfinite(float(s[col])) and float(s[col])>=0
+          log=pathlib.Path('reports/experiment.log').read_text(encoding='utf-8')
+          found=re.findall(r'V19_QUEUE_RISK proposals=(\d+) actualRelocations=(\d+) internalForecasts=(\d+) alternativeForecasts=(\d+)',log)
+          assert len(found)==1,found
+          proposals,moves,forecasts,neighbors=map(int,found[0])
+          assert proposals>0 and 0<=moves<=proposals
+          assert proposals<=forecasts<=3*proposals
+          assert forecasts-proposals==neighbors and 0<=neighbors<=2*proposals
+          pathlib.Path('reports/v19_forecast_counter.txt').write_text(
+              f'proposals={proposals} actualRelocations={moves} internalForecasts={forecasts} alternativeForecasts={neighbors}\n')
+          print('PASS 4 arms 3030 each, K16 each real replay, bounded v19 internal forecast accounting',
+                proposals,moves,forecasts,neighbors)
+          PY
+          printf 'DAG=%s seed=%s vm_profile=staggered policy=fifo pop=30 generations=100 K=16\n' \
+             '${{ matrix.workflow }}' '${{ matrix.seed }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_V19_QUEUE_CONFLICT_RISK_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+      - name: Preserve all real original candidate labels, trace and negative cases
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-v19-queue-risk-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
