@@ -104,7 +104,7 @@ public final class FLAFixedMappingReplay {
                 ?Files.newBufferedWriter(taskTraceFile,StandardCharsets.UTF_8):null) {
             if(taskTrace)taskWriter.write("workflow,seed,algorithm,candidate_index,speed,task_id,vm_id,"
                 +"planned_start,planned_finish,actual_start,actual_finish,actual_cpu_time,"
-                +"nominal_compute_seconds,cpu_minus_compute_seconds,start_error,finish_error\n");
+                +"nominal_compute_seconds,cpu_minus_nominal_compute_signed_seconds,start_error,finish_error\n");
             writer.write("workflow,seed,algorithm,source_candidate_index,speed,mapping,"
                 +"original_default_planned_makespan,original_default_planned_cost,"
                 +"original_default_actual_makespan,original_default_actual_cost,"
@@ -141,8 +141,11 @@ public final class FLAFixedMappingReplay {
                         double speedMips=LIWSABenchmarkExample.vmMips(nominal,vmId%4);
                         double compute=actual[4]/speedMips;
                         double residual=actual[3]-compute;
-                        if(!Double.isFinite(residual)||residual < -1e-5)
-                            throw new IllegalStateException("Negative/nonfinite actual CPU residual "+taskId);
+                        // Signed accounting residual: CloudSim actual CPU duration may
+                        // be smaller than taskLength/nominalVMmips. Do NOT interpret
+                        // either sign as independently measured stage-in seconds.
+                        if(!Double.isFinite(residual))
+                            throw new IllegalStateException("Nonfinite actual CPU residual "+taskId);
                         double planStart=metrics.tracePlannedStarts[taskIndex];
                         double planFinish=metrics.tracePlannedFinishes[taskIndex];
                         if(!Double.isFinite(planStart)||!Double.isFinite(planFinish)||
