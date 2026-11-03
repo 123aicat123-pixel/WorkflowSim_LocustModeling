@@ -63,6 +63,12 @@ jobs:
             org.workflowsim.planning.StageInAwareEvaluatorTest \
             2>&1 | tee ci-logs/stagein-aware-regression.log
 
+      - name: Assert v14 one-count stage-in-aware trace and causal neighbor
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true -cp "build/classes:lib/*" org.workflowsim.planning.TimelineParetoNeighborTest 2>&1 | tee ci-logs/v14-timeline-test.log
+
       - name: Assert experimental causal reliability gate and fallback
         shell: bash
         run: |
