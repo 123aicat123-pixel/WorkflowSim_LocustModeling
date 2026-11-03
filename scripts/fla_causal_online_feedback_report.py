@@ -28,7 +28,7 @@ def run(root,out):
             by={}
             row_sets={}
             for policy in ("pareto-cover","online-nearest-hv"):
-                prefix=policy+"_"+wf+"_s"+str(seed)
+                prefix=policy+"-"+wf+"-s"+str(seed)
                 matches=list(root.rglob(prefix+"_replays.csv"))
                 assert len(matches)==1,(prefix,matches)
                 rows=read(matches[0])
