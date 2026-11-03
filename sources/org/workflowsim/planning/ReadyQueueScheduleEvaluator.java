@@ -34,6 +34,16 @@ import org.workflowsim.utils.Parameters;
 public final class ReadyQueueScheduleEvaluator {
     private static final double EPS = 1e-9;
 
+    /** Experimental fixed-ready-queue forecast policy, distinct from runtime labels. */
+    public enum QueuePolicy { TASK_ID, SHORTEST, UPWARD }
+
+    public static QueuePolicy fromRuntimeName(String name) {
+        if("fifo".equals(name))return QueuePolicy.TASK_ID;
+        if("shortest".equals(name))return QueuePolicy.SHORTEST;
+        if("upward".equals(name))return QueuePolicy.UPWARD;
+        throw new IllegalArgumentException("Unknown priority forecast policy "+name);
+    }
+
     public static final class Result {
         public final double makespan;
         public final double cost;
@@ -60,8 +70,16 @@ public final class ReadyQueueScheduleEvaluator {
     private final Map<Integer,Integer> vmIndexById = new HashMap<>();
     private final int[][] parents;
     private final int[] declarationOrder;
+    private final QueuePolicy queuePolicy;
 
     public ReadyQueueScheduleEvaluator(List<Task> topologicalTasks,List<CondorVM> orderedVms) {
+        this(topologicalTasks,orderedVms,QueuePolicy.TASK_ID);
+    }
+
+    public ReadyQueueScheduleEvaluator(List<Task> topologicalTasks,List<CondorVM> orderedVms,
+                                       QueuePolicy policy) {
+        if(policy==null)throw new IllegalArgumentException("Missing queue forecast policy");
+        this.queuePolicy=policy;
         if (topologicalTasks==null||topologicalTasks.isEmpty()||
                 orderedVms==null||orderedVms.isEmpty())
             throw new IllegalArgumentException("Empty task/VM data");
@@ -98,7 +116,37 @@ public final class ReadyQueueScheduleEvaluator {
         }
         List<Integer> ids=new ArrayList<>();
         for(int i=0;i<n;i++)ids.add(i);
-        Collections.sort(ids,Comparator.comparingInt(i->order.get(i).getCloudletId()));
+        final double[] upwardRank=new double[n];
+        if(queuePolicy==QueuePolicy.UPWARD) {
+            for(int i=n-1;i>=0;i--) {
+                double maximumChild=0.0;
+                for(Task child:order.get(i).getChildList()) {
+                    Integer childIndex=indexes.get(child);
+                    if(childIndex==null||childIndex<=i)
+                        throw new IllegalArgumentException("Invalid descendant relation for upward priority");
+                    maximumChild=Math.max(maximumChild,upwardRank[childIndex]);
+                }
+                upwardRank[i]=order.get(i).getCloudletTotalLength()+maximumChild;
+                if(!Double.isFinite(upwardRank[i])||upwardRank[i]<0)
+                    throw new IllegalArgumentException("Invalid upward task priority");
+            }
+        }
+        if(queuePolicy==QueuePolicy.SHORTEST) {
+            Collections.sort(ids,(a,b)->{
+                int cmp=Long.compare(order.get(a).getCloudletTotalLength(),
+                                     order.get(b).getCloudletTotalLength());
+                return cmp!=0?cmp:Integer.compare(order.get(a).getCloudletId(),
+                                                  order.get(b).getCloudletId());
+            });
+        } else if(queuePolicy==QueuePolicy.UPWARD) {
+            Collections.sort(ids,(a,b)->{
+                int cmp=Double.compare(upwardRank[b],upwardRank[a]);
+                return cmp!=0?cmp:Integer.compare(order.get(a).getCloudletId(),
+                                                  order.get(b).getCloudletId());
+            });
+        } else {
+            Collections.sort(ids,Comparator.comparingInt(i->order.get(i).getCloudletId()));
+        }
         declarationOrder=new int[n];
         for(int i=0;i<n;i++)declarationOrder[i]=ids.get(i);
     }
@@ -127,8 +175,9 @@ public final class ReadyQueueScheduleEvaluator {
         int done=0,issued=0;
         int[] issueOrder=new int[n];
         while(done<n) {
-            // An unclustered, STATIC WorkflowEngine queues ready jobs in DAX
-            // declaration order, and each idle VM takes its first eligible job.
+            // Use the frozen experimental ready-task forecast order. Only
+            // already completed-parent tasks can dispatch; VM mapping fixed.
+            // TASK_ID retains the original diagnostic behavior exactly.
             for(int i:declarationOrder) {
                 if(status[i]!=0||running[assigned[i]]>=0)continue;
                 boolean ready=true;
