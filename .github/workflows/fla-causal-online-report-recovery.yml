@@ -1,0 +1,38 @@
+name: Recover causal K16 report from six successful archived cases
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-causal-online-report-recovery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41595213775
+          github-token: ${{ github.token }}
+          pattern: causal-k16-*-41595213775
+          path: original-cases
+      - name: Recompute all six paired-case simulator HV values without rerunning search
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 scripts/fla_causal_online_feedback_report.py original-cases reports \
+            2>&1 | tee reports/aggregate.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          printf 'Original six successful Java/WorkflowSim jobs: GitHub Actions 41595213775\n' > reports/source-run.txt
+          cat reports/causal_online_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: causal-k16-recovered-summary-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
