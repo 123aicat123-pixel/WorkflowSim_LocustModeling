@@ -1,5 +1,5 @@
 name: Cross-language precision parity for three prospective FLA replay selectors
-# Exact prospective Python-Java parity now checks BOTH Pareto-cover and scalar-sweep selectors.
+# Verify Python-Java candidate order and strict nested coverage prefixes K8 K16 K24 K32.
 on:
   push:
     branches: [fla-baseline]
