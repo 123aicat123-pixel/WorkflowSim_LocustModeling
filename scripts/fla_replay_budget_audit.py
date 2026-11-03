@@ -106,7 +106,7 @@ def sweep(items):
 def extreme_band3(items,k):
     """Pre-simulator ablation: up to three distinct points per planned objective extreme."""
     assert k>0 and len({x.mapping for x in items})>=k
-    unique = list({x.mapping:x for x in reversed(items)}.values())[::-1]
+    unique = list({x.mapping:x for x in items}.values())
     quota=min(3,max(1,k//4))
     picked=[]
     for ordered in (sorted(unique,key=lambda x:(x.m,x.c,x.mapping)),
