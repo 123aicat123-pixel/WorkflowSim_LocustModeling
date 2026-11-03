@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Set;
 import org.cloudbus.cloudsim.Cloudlet;
 import org.workflowsim.Job;
+import org.workflowsim.CondorVM;
 import org.workflowsim.Task;
 import org.workflowsim.utils.Parameters;
 
