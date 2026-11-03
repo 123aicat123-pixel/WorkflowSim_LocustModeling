@@ -67,6 +67,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static int CONFIG_CRITICAL_RELOCATION_MODE = 0;
     /** Post-search, planning-only directional calibration; disabled by default. */
     public static boolean CONFIG_CRITICAL_LOCAL_AUDIT = false;
+    /** v11: FLA-phase-specific online Pareto-admission bandit; disabled by default. */
+    public static boolean CONFIG_PHASE_OPERATOR_BANDIT = false;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -97,6 +99,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public int criticalProxySamples;
         public double criticalProxyPearson;
         public double criticalProxyMedianAbsolutePctError;
+        public int[] banditArmUses;
+        public int[] banditArmArchiveAdmissions;
         public double finalAlpha1;
         public double finalDiversity;
         public List<double[]> searchTrace; // {iteration, archiveSize, bestM, bestCost, diversity}
@@ -138,10 +142,13 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private final boolean useCostSeeding, useCostExtremeGuidance;
     private final boolean reserveCostExtreme, reserveMakespanExtreme;
     private final int edgeRelocationMode, criticalRelocationMode;
+    private final boolean usePhaseOperatorBandit;
     private final List<Map<Integer,Integer>> seedMaps;
     private final List<Solution> archive = new ArrayList<>();
     private final List<double[]> searchTrace = new ArrayList<>();
     private final List<double[]> criticalProxyPairs = new ArrayList<>();
+    private final int[][] banditUses = new int[3][3];
+    private final int[][] banditAdmissions = new int[3][3];
 
     private Random random;
     private FLAScheduleEvaluator evaluator;
@@ -186,6 +193,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         reserveMakespanExtreme = CONFIG_RESERVE_MAKESPAN_EXTREME;
         edgeRelocationMode = CONFIG_EDGE_RELOCATION_MODE;
         criticalRelocationMode = CONFIG_CRITICAL_RELOCATION_MODE;
+        usePhaseOperatorBandit = CONFIG_PHASE_OPERATOR_BANDIT;
         seedMaps = CONFIG_SEED_ASSIGNMENTS == null ? Collections.emptyList()
                 : new ArrayList<>(CONFIG_SEED_ASSIGNMENTS);
     }
@@ -213,9 +221,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
             }
         }
         importance = calculateUpwardRankWeights();
-        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0) prepareResourceHeuristic();
-        if (criticalRelocationMode != 0) prepareCriticalProxy();
-        if (edgeRelocationMode != 0) prepareDagEdgeRelocation();
+        if (useResourceAwareMutation || useCostSeeding || edgeRelocationMode != 0 || criticalRelocationMode != 0 || usePhaseOperatorBandit) prepareResourceHeuristic();
+        if (criticalRelocationMode != 0 || usePhaseOperatorBandit) prepareCriticalProxy();
+        if (edgeRelocationMode != 0 || usePhaseOperatorBandit) prepareDagEdgeRelocation();
         if (!useDag) { Arrays.fill(importance, 1.0); }
         random = seed == null ? new Random() : new Random(seed);
         group1Size = (populationSize + 1) / 2;
@@ -224,6 +232,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         group2 = new ArrayList<>(initial.subList(group1Size, populationSize));
         archive.clear(); searchTrace.clear(); criticalProxyPairs.clear();
         doCount = 0; eoCount = 0; ssoCount = 0; edgeChangeCount = 0; criticalChangeCount = 0; alpha1 = 0.85;
+        for(int phase=0;phase<3;phase++) {
+            Arrays.fill(banditUses[phase],0);
+            Arrays.fill(banditAdmissions[phase],0);
+        }
         for (Solution s : initial) { archiveConsider(s); }
         final Set<String> globalVisited = useNoveltyRepair && useGlobalHistory
                 ? new HashSet<String>() : null;
@@ -288,6 +300,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     ref = minimumCostArchive();
                 }
                 int[] genes = current.genes.clone();
+                int banditArm=-1;
                 if(useImmigrants && random.nextDouble()<0.10) {
                     // Budget unchanged: exactly one evaluation per child.
                     for(int k=0;k<n;k++) genes[k]=allowed[k][random.nextInt(allowed[k].length)];
@@ -317,6 +330,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                         criticalRelocate(genes);
                         if (!Arrays.equals(beforeCritical, genes)) criticalChangeCount++;
                     }
+                    if(usePhaseOperatorBandit) {
+                        banditArm=chooseBanditArm(phase);
+                        if(banditArm==1)edgeRelocation(genes,isG1,true);
+                        else if(banditArm==2)criticalRelocate(genes);
+                    }
                 }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
                 // Passive fidelity audit: proxy uses NO target fitness calls;
@@ -327,6 +345,10 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                 if(criticalRelocationMode != 0)
                     criticalProxyPairs.add(new double[]{predictedCriticalMakespan, child.makespan});
                 archiveConsider(child); // ALL visited children, even if not selected
+                if(usePhaseOperatorBandit && banditArm>=0) {
+                    banditUses[phase][banditArm]++;
+                    if(archive.contains(child))banditAdmissions[phase][banditArm]++;
+                }
                 (isG1 ? children1 : children2).add(child);
             }
             // Global fronts are computed from all parents/children, but each group
@@ -393,6 +415,14 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.group2Size = group2.size();
         m.edgeRelocationChanges = edgeChangeCount;
         m.criticalRelocationChanges = criticalChangeCount;
+        if(usePhaseOperatorBandit) {
+            m.banditArmUses=new int[3];
+            m.banditArmArchiveAdmissions=new int[3];
+            for(int p=0;p<3;p++)for(int a=0;a<3;a++){
+                m.banditArmUses[a]+=banditUses[p][a];
+                m.banditArmArchiveAdmissions[a]+=banditAdmissions[p][a];
+            }
+        }
         if (!criticalProxyPairs.isEmpty()) {
             double sx=0,sy=0,sxx=0,syy=0,sxy=0;
             double[] errors=new double[criticalProxyPairs.size()];
@@ -421,6 +451,11 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         System.out.printf("DAG-Pareto-FLA: front=%d, chosenM=%.6f, chosenC=%.6f, eval=%d, DO=%d EO=%d SSO=%d edgeRelocationChanges=%d criticalRelocationChanges=%d%n",
                 m.paretoFrontSize,m.chosenMakespan,m.chosenCost,m.objectiveEvaluations,
                 m.diffusionIterations,m.equilibriumIterations,m.steadyStateIterations,m.edgeRelocationChanges,m.criticalRelocationChanges);
+        if(usePhaseOperatorBandit)
+            System.out.printf(java.util.Locale.ROOT,
+                    "FLA_PHASE_BANDIT usesBaseline=%d usesColocate=%d usesCritical=%d archiveAdmissionsBaseline=%d archiveAdmissionsColocate=%d archiveAdmissionsCritical=%d%n",
+                    m.banditArmUses[0],m.banditArmUses[1],m.banditArmUses[2],
+                    m.banditArmArchiveAdmissions[0],m.banditArmArchiveAdmissions[1],m.banditArmArchiveAdmissions[2]);
         if(m.criticalProxySamples>0)
             System.out.printf(java.util.Locale.ROOT,
                     "FLA_CRITICAL_PROXY_AUDIT samples=%d pearson=%.9f medianAbsolutePctError=%.9f%%%n",
@@ -692,6 +727,31 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
      * are OUTSIDE optimization and no mutated genotype is reinserted into the
      * selected solution/archive. They are NOT independent WorkflowSim replay.
      */
+    /**
+     * v11 FLA-phase-specific three-armed upper-confidence-bound controller.
+     * Arm 0 is the ordinary FLA child, 1 is DAG-edge co-location, 2 is
+     * critical-task makespan relocation. Each arm uses ONE and only one
+     * shared-objective evaluation after gene construction.
+     *
+     * The outcome-based reward is whether the child survived insertion into
+     * the PLANNED nondominated archive, not a claim of simulator correctness.
+     * With three separate UCB tables, DO/EO/SSO learn independently.
+     */
+    private int chooseBanditArm(int phase) {
+        int[] counts=banditUses[phase],wins=banditAdmissions[phase];
+        for(int arm=0;arm<3;arm++)if(counts[arm]==0)return arm;
+        int total=counts[0]+counts[1]+counts[2];
+        double log=Math.log(Math.max(2,total));
+        double best=Double.NEGATIVE_INFINITY;
+        int chosen=0;
+        for(int arm=0;arm<3;arm++){
+            double mean=(double)wins[arm]/counts[arm];
+            double ucb=mean+0.60*Math.sqrt(2.0*log/counts[arm]);
+            if(ucb>best){best=ucb;chosen=arm;}
+        }
+        return chosen;
+    }
+
     private void runCriticalLocalAudit() {
         StageInAwareScheduleEvaluator independent =
                 new StageInAwareScheduleEvaluator(taskOrder,vmList);
@@ -908,8 +968,12 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     }
 
     private void edgeRelocation(int[] genes, boolean makespanGroup) {
+        edgeRelocation(genes,makespanGroup,false);
+    }
+
+    private void edgeRelocation(int[] genes, boolean makespanGroup,boolean forceCoLocate) {
         if(dagEdgeWeight.length==0) return;
-        final boolean coLocate = edgeRelocationMode==1 ||
+        final boolean coLocate = forceCoLocate || edgeRelocationMode==1 ||
                 (edgeRelocationMode==3 && !makespanGroup);
         // Under edgeRelocationMode=2 all groups use separation.
         double total=0.0;
