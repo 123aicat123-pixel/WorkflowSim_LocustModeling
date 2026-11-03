@@ -1,0 +1,75 @@
+name: FLA K16 prospective versus exhaustive oracle exact parity
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-k16-oracle-parity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired:
+    name: Verify full vs K16 ${{ matrix.workflow }} seed ${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        workflow: [Montage_25, CyberShake_30, Inspiral_50]
+        seed: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compile exact same source for both experiments
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes ci-logs 'Output&Results'
+          git rev-parse HEAD | tee ci-logs/source-sha.txt
+          find sources examples tests -type f -name '*.java' | sort > ci-logs/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @ci-logs/sources.txt 2>&1 | tee ci-logs/compile.log
+      - name: Generate COMPLETE visited genotype simulator oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.screeningAuditPerAlgorithm=256 \
+            -Ddagfla.screeningAuditIncludeTies=true \
+            -Ddagfla.screeningAuditAllVisited=true \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 8 9 \
+            'Output&Results/full_${{ matrix.workflow }}_s${{ matrix.seed }}' v12-fair-pair \
+            2>&1 | tee ci-logs/oracle.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/oracle.log
+      - name: Independently search and simulate exactly K16 from planned data only
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.budgetReplayK=16 \
+            -cp 'build/classes:lib/*' org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 8 9 \
+            'Output&Results/k16_${{ matrix.workflow }}_s${{ matrix.seed }}' v12-fair-pair \
+            2>&1 | tee ci-logs/k16.log
+          grep -F 'PASS identical first TWO task->VM deterministic cost seeds' ci-logs/k16.log
+          test "$(grep -c 'PASS prospective planned-only replay selection K=16' ci-logs/k16.log)" -eq 3
+      - name: Cross-check Java on-line selections, Python offline oracle, actual simulated objectives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/fla_prospective_oracle_parity.py \
+            'Output&Results/full_${{ matrix.workflow }}_s${{ matrix.seed }}' \
+            'Output&Results/k16_${{ matrix.workflow }}_s${{ matrix.seed }}' 16 \
+            2>&1 | tee ci-logs/crosscheck.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: k16-full-parity-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: |
+            ci-logs/
+            Output&Results/full_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+            Output&Results/k16_${{ matrix.workflow }}_s${{ matrix.seed }}_*.csv
+          retention-days: 90
+          if-no-files-found: error
