@@ -222,6 +222,7 @@ public final class WorkflowEngine extends SimEntity {
             getJobsList().addAll(ReclusteringEngine.process(job, newId));
         }
 
+        FLATaskEventTrace.emit("ENGINE_COMPLETE", job, org.cloudbus.cloudsim.core.CloudSim.clock(), -1.0);
         getJobsReceivedList().add(job);
         jobsSubmitted--;
         if (getJobsList().isEmpty() && jobsSubmitted == 0) {
