@@ -347,3 +347,29 @@ All methods visited roughly 98–99.5% unique assignments per evaluated candidat
 ### Publication decision constraint
 
 The project has useful reproducible engineering contributions and negative/positive algorithm ablations. It does **not** currently establish generally superior multiobjective DAG workflow optimization over a fair, equally initialized NSGA-II. Further studies should pre-register family, VM configuration, budget, comparator, shared reference points, and an untouched validation partition to avoid progressive tuning on the same small set of DAG families. No result here proves that a Q1 paper will be accepted.
+
+## VM price-profile stress test with fair initializations (2026-11-03)
+
+To assess whether the FLA-v7 versus `NSGA-II[costseed]` fairness result was specific to the original VM prices, we added **optional** `-Dliwsa.vmPriceProfile=linear|convex` synthetic cost regimes. The original VM rates `[0.15, 0.30, 0.60, 0.90]` remain the **unchanged default**, protected by a Java regression test. Synthetic profiles adjust only VM per-unit-time prices, and both solvers and the simulator see the SAME `CondorVM.getCost()`. The `linear` profile uses `0.15*(MIPS/250)`, and the `convex` profile uses `0.15*(MIPS/250)^1.5`. These are NOT verified cloud-provider rates or real cloud validation.
+
+Both optimizers received the SAME first two deterministic task-to-VM mappings, confirmed by a runtime assertion. The same stage-in-aware planning evaluator and independent WorkflowSim replays were used; **each optimizer used exactly 3030 target-function evaluations**. Three 100-task DAG families (CyberShake, Montage, Sipht) × three seeds × two price regimes = **18 paired optimization comparisons**, all completed. HV is recomputed with one shared frozen reference **within each price regime and DAG across both algorithms and seeds**. Cross-regime *absolute* HV magnitudes are not comparable.
+
+| Synthetic VM price regime | Mean paired v7 minus identically initialized NSGA-II simulated HV | v7 wins |
+|---|---:|---:|
+| Linear VM prices | **−0.836%** | **2/9** |
+| Convex VM prices | **−0.753%** | **3/9** |
+
+More detailed within-regime results:
+
+| Profile | CyberShake_100 | Montage_100 | Sipht_100 |
+|---|---:|---:|---:|
+| Linear: v7 paired HV difference | −1.812% (0/3) | −1.153% (0/3) | +0.457% (2/3) |
+| Convex: v7 paired HV difference | −1.627% (1/3) | +0.690% (2/3) | −1.321% (0/3) |
+
+The fair-NSGA result under original prices in the separate five-family/five-seed report was **−0.695%** for v7 (9/25 wins). The different synthetic pricing choices tested here did not reverse the negative pooled mean. This is descriptive sensitivity only: two deliberately constructed profiles, three pre-studied families and three seeds per profile, not a preregistered independent real-cloud test.
+
+**Research conclusion:** better initial schedules are transferable across optimizers; neither v7 cost initialization nor v8 environmental selection has established a FLA-specific advantage over a properly initialized NSGA-II. These results should be reported, not hidden in a publication attempt.
+
+[Original logs, complete 18 paired WorkflowSim replays, equal-seed assertions, and frozen-reference per-profile CSVs](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41564175609).
+
+The research branch remains isolated from `master`; no identity between GitHub and the user's local working tree has been verified.
