@@ -1,4 +1,4 @@
-name: Cross-language precision parity for prospective FLA replay selector
+name: Cross-language precision parity for three prospective FLA replay selectors
 # Exact prospective Python-Java parity now checks BOTH Pareto-cover and scalar-sweep selectors.
 on:
   push:
