@@ -1,0 +1,40 @@
+name: Read-only Priority Predictor New-Instance Cross-VM Aggregate
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-new-instance-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  independent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download eight frozen original new-instance true simulator job artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41682109356
+          github-token: ${{ github.token }}
+          pattern: fla-new-instance-priority-*-41682109356
+          path: original
+      - name: Independently verify all actual 24 cases and signed predictions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_priority_new_instance_independent_audit.py
+          python3 scripts/fla_priority_new_instance_independent_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          printf 'Original immutable simulator job Actions: 41682109356\n' > reports/original-run-id.txt
+          cat reports/new_instance_priority_aggregate_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all 24 positive, tie and negative forecast cases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-new-instance-priority-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
