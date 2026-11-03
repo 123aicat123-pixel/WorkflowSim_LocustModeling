@@ -96,8 +96,15 @@ public final class FLAFixedMappingReplay {
                 throw new IllegalArgumentException("Original candidate index or mapping not unique");
         }
         if(output.getParent()!=null)Files.createDirectories(output.getParent());
+        final boolean taskTrace=Boolean.getBoolean("dagfla.fixedTaskTrace");
+        final Path taskTraceFile=Paths.get(output.toString().replaceFirst("\\.csv$","")+"_tasks.csv");
         Log.disable();
-        try(BufferedWriter writer=Files.newBufferedWriter(output,StandardCharsets.UTF_8)) {
+        try(BufferedWriter writer=Files.newBufferedWriter(output,StandardCharsets.UTF_8);
+            BufferedWriter taskWriter=taskTrace
+                ?Files.newBufferedWriter(taskTraceFile,StandardCharsets.UTF_8):null) {
+            if(taskTrace)taskWriter.write("workflow,seed,algorithm,candidate_index,speed,task_id,vm_id,"
+                +"planned_start,planned_finish,actual_start,actual_finish,actual_cpu_time,"
+                +"nominal_compute_seconds,cpu_minus_compute_seconds,start_error,finish_error\\n");
             writer.write("workflow,seed,algorithm,source_candidate_index,speed,mapping,"
                 +"original_default_planned_makespan,original_default_planned_cost,"
                 +"original_default_actual_makespan,original_default_actual_cost,"
@@ -116,6 +123,40 @@ public final class FLAFixedMappingReplay {
                     throw new IllegalStateException("Actual replay failed exact assignment identity");
                 LIWSAPlanningAlgorithm.LastRunMetrics metrics=LIWSAPlanningAlgorithm.lastRun;
                 if(metrics==null)throw new IllegalStateException("No independent planner metrics");
+                if(taskTrace) {
+                    if(metrics.traceTaskIds==null||metrics.traceVmIds==null||
+                            metrics.tracePlannedStarts==null||metrics.tracePlannedFinishes==null||
+                            result.fixedTaskActualTimeline==null||
+                            metrics.traceTaskIds.length!=mapping.size()||
+                            result.fixedTaskActualTimeline.size()!=mapping.size())
+                        throw new IllegalStateException("Incomplete fixed task timeline");
+                    java.util.Set<Integer> seen=new java.util.HashSet<>();
+                    for(int taskIndex=0;taskIndex<metrics.traceTaskIds.length;taskIndex++) {
+                        int taskId=metrics.traceTaskIds[taskIndex],vmId=metrics.traceVmIds[taskIndex];
+                        double[] actual=result.fixedTaskActualTimeline.get(taskId);
+                        if(actual==null||!seen.add(taskId)||mapping.get(taskId)==null||
+                                mapping.get(taskId)!=vmId||(int)actual[0]!=vmId)
+                            throw new IllegalStateException("Task trace identity/VM mismatch "+taskId);
+                        double nominal=LIWSABenchmarkExample.VM_TYPES[vmId/4][0];
+                        double speedMips=LIWSABenchmarkExample.vmMips(nominal,vmId%4);
+                        double compute=actual[4]/speedMips;
+                        double residual=actual[3]-compute;
+                        if(!Double.isFinite(residual)||residual < -1e-5)
+                            throw new IllegalStateException("Negative/nonfinite actual CPU residual "+taskId);
+                        double planStart=metrics.tracePlannedStarts[taskIndex];
+                        double planFinish=metrics.tracePlannedFinishes[taskIndex];
+                        if(!Double.isFinite(planStart)||!Double.isFinite(planFinish)||
+                                planFinish<planStart)
+                            throw new IllegalStateException("Invalid planned task timeline");
+                        taskWriter.write(String.format(Locale.ROOT,
+                           "%s,%d,%s,%d,%s,%d,%d,%.17g,%.17g,%.17g,%.17g,"
+                           +"%.17g,%.17g,%.17g,%.17g,%.17g%n",
+                           workflow,seed,algorithm,k,profile,taskId,vmId,planStart,planFinish,
+                           actual[1],actual[2],actual[3],compute,residual,
+                           actual[1]-planStart,actual[2]-planFinish));
+                    }
+                    taskWriter.flush();
+                }
                 double[] measured={metrics.chosenMakespan,metrics.chosenCost,
                         result.makespan,result.cost};
                 for(double x:measured)
