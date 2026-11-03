@@ -43,6 +43,9 @@ public final class FLAResearchExperiment {
     private static final int SCREENING_AUDIT_N = Integer.getInteger("dagfla.screeningAuditPerAlgorithm", 0);
     /** Prospective, actual WorkflowSim replay budget; zero preserves historical replay behavior. */
     private static final int BUDGET_REPLAY_K = Integer.getInteger("dagfla.budgetReplayK", 0);
+    /** Same real-K simulator-call budget for all solvers; policy chooses which planned candidates. */
+    private static final String BUDGET_REPLAY_POLICY =
+            System.getProperty("dagfla.budgetReplayPolicy", "pareto-cover");
     /** Include equal planned objectives from distinct assignments in exhaustive audits. */
     private static final boolean SCREENING_INCLUDE_TIES =
             Boolean.getBoolean("dagfla.screeningAuditIncludeTies");
@@ -96,6 +99,8 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random").contains(BUDGET_REPLAY_POLICY))
+            throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
         if (BUDGET_REPLAY_K > 0 && SCREENING_AUDIT_N > 0)
@@ -167,7 +172,9 @@ public final class FLAResearchExperiment {
             // Only unique planned-nondominated schedules are replayed, equally.
             run.plannedNdCount = plannedNondominated(run.candidates).size();
             List<Candidate> front = BUDGET_REPLAY_K > 0
-                    ? budgetedPlannedCoverage(run.allVisited, BUDGET_REPLAY_K)
+                    ? ("random".equals(BUDGET_REPLAY_POLICY)
+                        ? budgetedRandomVisited(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm)
+                        : budgetedPlannedCoverage(run.allVisited, BUDGET_REPLAY_K))
                     : plannedNondominated(run.candidates);
             if (BUDGET_REPLAY_K > 0 && front.size() != BUDGET_REPLAY_K)
                 throw new IllegalStateException("Wrong prospective simulator replay call budget");
@@ -223,8 +230,10 @@ public final class FLAResearchExperiment {
             Path protocol = Paths.get(prefix + "_budget_protocol.txt");
             Files.write(protocol, Arrays.asList(
                     "PROSPECTIVE_REPLAY_BUDGET_K=" + BUDGET_REPLAY_K,
+                    "PROSPECTIVE_REPLAY_POLICY=" + BUDGET_REPLAY_POLICY,
                     "Actual WorkflowSim replays: exactly K distinct visited genotype assignments per solver",
-                    "Pre-simulation selection: Pareto layers plus normalized greedy max-min objective coverage",
+                    "Pre-simulation selection: " + BUDGET_REPLAY_POLICY +
+                    " (Pareto layer + max-min coverage, or deterministically seeded uniform random)",
                     "Selection never reads true simulator objective values; K is separate from optimizer evaluation counts",
                     "Simulator HV reference in summary is shared across solver arms within this run only",
                     "This is NOT the full visited simulator Pareto front and not a registered reference point",
@@ -590,6 +599,23 @@ public final class FLAResearchExperiment {
         return key.toString();
     }
 
+
+    /** Exactly K deterministic genotype-uniform proposals, independent of simulator scores. */
+    private static List<Candidate> budgetedRandomVisited(List<Candidate> history,int budget,
+            long seed,String algorithm) {
+        Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
+        for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
+        List<Candidate> list=new ArrayList<>(unique.values());
+        if(list.size()<budget)throw new IllegalStateException("Insufficient distinct history for K");
+        list.sort(Comparator.comparing(FLAResearchExperiment::canonicalMappingKey));
+        long salt=(((long)algorithm.hashCode())*0x9E3779B97F4A7C15L)
+                ^ 0xD1B54A32D192ED03L ^ seed;
+        Collections.shuffle(list,new Random(salt));
+        System.out.println("PASS prospective planned-only random replay selection K="+budget
+                +" uniqueHistory="+unique.size());
+        return new ArrayList<>(list.subList(0,budget));
+    }
+
     private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
         Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
         for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
@@ -732,7 +758,8 @@ public final class FLAResearchExperiment {
             if (BUDGET_REPLAY_K > 0) {
                 w.write("Prospective experiment: replay exactly K=" + BUDGET_REPLAY_K +
                         " distinct evaluated assignments per solver, selected using planned objectives only.\n");
-                w.write("This selection is Pareto-layer first with normalized max-min planned-objective diversity.\n");
+                w.write("This selection policy is " + BUDGET_REPLAY_POLICY +
+                        "; it is applied to unique visited genotypes before simulating.\n");
             } else {
                 w.write("Historical experiment: replay selected planned-nondominated records, not every visited genotype.\n");
             }
