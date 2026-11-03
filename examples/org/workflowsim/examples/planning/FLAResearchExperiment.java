@@ -772,7 +772,7 @@ public final class FLAResearchExperiment {
                 }
             }
         }
-        for(Candidate c:budgetedPlannedCoverage(history,budget)) {
+        for(Candidate c:budgetedPlannedCoverage(history,Math.min(all.size(),budget+2*quota))) {
             if(selected.size()==budget)break;
             if(!selected.contains(c))selected.add(c);
         }
