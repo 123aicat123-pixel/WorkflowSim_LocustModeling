@@ -132,7 +132,7 @@ def analyze(root,out):
     report=["# Equal-budget FLA/NSGA-II search with historical vs frozen dual-worst decoder",
         "",
         "This is an independent **read-only** recomputation of actual WorkflowSim K16 hypervolume on identical within-DAG-and-seed references.",
-        "Original simulator + optimizer Actions run: 41673100999; 8 original benchmark invocations, two solvers per invocation, 3030 counted evaluations per solver, K16 true simulator calls per solver. Archived negative results are kept.",
+        "Original simulator + optimizer Actions run: 41673209577; 8 original benchmark invocations, two solvers per invocation, 3030 counted evaluations per solver, K16 true simulator calls per solver. Archived negative results are kept.",
         "",
         "## All four block × two-solver paired comparisons",
         "| DAG | Seed | Solver | Old HV 1.5x | Worst HV 1.5x | Δ HV (worst−old) | Δ HV at 3.0x | Worst/old search wall time |",
