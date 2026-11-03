@@ -460,3 +460,29 @@ v9-colocate was chosen *on the development set only* for extra-family testing. T
 **Engineering interpretation and next experiment:** The low-cost extreme is shared almost exactly thanks to identical initial cost seeds; FLA's harder challenge appears to be improving the **minimum makespan extreme** while maintaining cost Pareto quality, not generating more distinct assignments. Any proposed makespan-targeted operator must receive a separate controlled ablation and be compared to a similarly initialized NSGA-II, not only to a weaker unseeded baseline.
 
 [Immutable 25-case simulated-front geometry analysis and raw table](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41567489035).
+
+
+## v10 cheap critical-path relocation: negative ablation (2026-11-03)
+
+After the 25-case identical-cost-seed Pareto geometry audit found that FLA v7 had an average minimum simulated makespan **9.186% worse** than seeded NSGA-II despite matching minimum costs and >99% genotype novelty, v10 explored a new *FLA-specific* local mutation for the makespan-oriented subgroup. It is OFF by default and is NOT an original FLA equation:
+
+- **v10-critical**: select one of eight late-finish DAG tasks using a cheap task/VM service-and-parent-dependency scheduling surrogate; switch one VM gene to the proxy-best choice.
+- **v10-guarded**: same proposal but adds a soft penalty to discourage increased estimated rental cost.
+- Neither variant calls the actual target evaluator to choose proposals; every resulting child is evaluated precisely ONCE through the same shared stage-in-aware objective and is independently simulated in WorkflowSim.
+
+The 8×6 Montage_25 seed=1234 activation/decoder regression verified **56 actual objective evaluations for each variant**, **0** critical relocation events for v7, **11** for v10-critical and **11** for v10-guarded. Thus the modified variants truly make gene changes without stealing extra evaluations from a competing method.
+
+[Activation and exact-budget assertions](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41567962389).
+
+**Development test:** CyberShake_100, Montage_100, Sipht_100 × three seeds, population 30, 100 generations, 3030 evaluations for each variant, one workflow-level frozen simulator-HV reference across all variants/seeds:
+
+| Variant compared to unchanged v7-costseed | Mean paired HV difference, 9 cases | Better cases |
+|---|---:|---:|
+| v10-critical | **−1.777%** | 3/9 |
+| v10-guarded | **−2.929%** | 2/9 |
+
+Per-family values: v10-critical was CyberShake **−0.894%**, Montage **−0.997%**, Sipht **−3.441%**. v10-guarded was CyberShake **−1.927%**, Montage **−7.137%**, Sipht **+0.278%**. Both failed the development-set selection condition, so **neither v10 variant was promoted to held-out validation or is an endorsed performance improvement**.
+
+[Complete nine-case v10 WorkflowSim replay logs, budget checks, and raw candidate CSVs](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41567895844).
+
+**Scientific next question:** The cheap v10 completion-time proxy ignores exact WorkflowSim insertion gaps, repository caching and some StageIn behavior. It was intended only to select candidate genotypes cheaply. Its accuracy and ranking correlation against the actual stage-in-aware planning evaluator and simulator should be *measured*, not assumed; a poorly aligned proxy is a plausible explanation for the negative ablation, but no causal link is claimed. Continuing to add mutation operators without this diagnostic is not evidence-driven. FLA v7-costseed remains the strongest studied FLA candidate but has not beaten identically cost-seeded NSGA-II in the full 25-case fairness test.
