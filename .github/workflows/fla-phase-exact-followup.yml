@@ -1,0 +1,36 @@
+name: FLA phase population exact selected genotype verification read-only
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-phase-exact-followup.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41621527587
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: fla-phase-pop-*-41621527587
+          path: original
+      - name: Audit exact all-generation selected individuals and archive admissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_phase_population_exact_followup.py
+          python3 scripts/fla_phase_population_exact_followup.py original reports | tee reports/analysis.log
+          git rev-parse HEAD > reports/analysis_sha.txt
+          cat reports/phase_population_exact_report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-phase-exact-report-${{ github.run_id }}
+          path: reports
+          retention-days: 90
