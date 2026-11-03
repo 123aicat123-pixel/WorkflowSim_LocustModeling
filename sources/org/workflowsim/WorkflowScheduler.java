@@ -255,6 +255,7 @@ public class WorkflowScheduler extends DatacenterBroker {
             if (Parameters.getOverheadParams().getQueueDelay() != null) {
                 delay = Parameters.getOverheadParams().getQueueDelay(cloudlet);
             }
+            FLATaskEventTrace.emit("SCHEDULER_DISPATCH", (Job)cloudlet, CloudSim.clock(), -1.0);
             schedule(getVmsToDatacentersMap().get(vmId), delay, CloudSimTags.CLOUDLET_SUBMIT, cloudlet);
         }
         getCloudletList().removeAll(scheduledList);
