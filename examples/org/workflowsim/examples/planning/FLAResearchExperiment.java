@@ -247,7 +247,8 @@ public final class FLAResearchExperiment {
                 "v3-resource","v3-archive","v3-both","v4-crowding","v4-crowding-resource",
                 "v5-dagblock","v5-donor","v5-both","v6-pop","v6-global","v6-strong",
                 "v7-costseed","v7-extreme","v7-both",
-                "v8-cost","v8-dual","v8-dual-guide");
+                "v8-cost","v8-dual","v8-dual-guide",
+                "v9-colocate","v9-separate","v9-adaptive");
         if (!supported.contains(variant)) throw new IllegalArgumentException("Unknown ablation: " + variant);
         final boolean minimal="minimal".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_DAG_GUIDANCE = !minimal && !"no-dag".equals(variant);
@@ -255,34 +256,37 @@ public final class FLAResearchExperiment {
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_SSO = !minimal && !"no-archive-sso".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_MUTATION = !minimal && !"no-adaptive-mutation".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ADAPTIVE_PREFERENCE = !minimal && !"no-adaptive-preference".equals(variant);
-        boolean isV2=variant.startsWith("v2") || variant.startsWith("v3") || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8");
+        boolean isV2=variant.startsWith("v2") || variant.startsWith("v3") || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9");
         if(isV2) DAGParetoFLAPlanningAlgorithm.CONFIG_CROSS_GROUP_DO=false;
         DAGParetoFLAPlanningAlgorithm.CONFIG_RESOURCE_AWARE_MUTATION =
                 "v3-resource".equals(variant) || "v3-both".equals(variant)
                 || "v4-crowding-resource".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_RECOMBINATION =
                 "v3-archive".equals(variant) || "v3-both".equals(variant) || variant.startsWith("v4")
-                || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8");
+                || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9");
         DAGParetoFLAPlanningAlgorithm.CONFIG_PARETO_CROWDING_SELECTION = variant.startsWith("v4");
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_DAG_BLOCK =
                 "v5-dagblock".equals(variant) || "v5-both".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_PREFERENCE_DONOR =
                 "v5-donor".equals(variant) || "v5-both".equals(variant);
-        DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_REPAIR = variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8");
+        DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_REPAIR = variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9");
         DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_GLOBAL_HISTORY =
                 "v6-global".equals(variant) || "v6-strong".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_NOVELTY_STRONG_REPAIR =
                 "v6-strong".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_COST_SEEDING =
-                "v7-costseed".equals(variant) || "v7-both".equals(variant) || variant.startsWith("v8");
+                "v7-costseed".equals(variant) || "v7-both".equals(variant) || variant.startsWith("v8") || variant.startsWith("v9");
         DAGParetoFLAPlanningAlgorithm.CONFIG_COST_EXTREME_GUIDANCE =
                 "v7-extreme".equals(variant) || "v7-both".equals(variant) || "v8-dual-guide".equals(variant);
+        DAGParetoFLAPlanningAlgorithm.CONFIG_EDGE_RELOCATION_MODE =
+                "v9-colocate".equals(variant) ? 1 : "v9-separate".equals(variant) ? 2
+                : "v9-adaptive".equals(variant) ? 3 : 0;
         DAGParetoFLAPlanningAlgorithm.CONFIG_RESERVE_COST_EXTREME = variant.startsWith("v8");
         DAGParetoFLAPlanningAlgorithm.CONFIG_RESERVE_MAKESPAN_EXTREME =
                 "v8-dual".equals(variant) || "v8-dual-guide".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_GLOBAL_SURVIVOR_SELECTION =
                 "v2-global".equals(variant) || "v2".equals(variant) || variant.startsWith("v3")
-                || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8");
+                || variant.startsWith("v4") || variant.startsWith("v5") || variant.startsWith("v6") || variant.startsWith("v7") || variant.startsWith("v8") || variant.startsWith("v9");
         DAGParetoFLAPlanningAlgorithm.CONFIG_RANDOM_IMMIGRANTS =
                 "v2-immigrants".equals(variant) || "v2".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
