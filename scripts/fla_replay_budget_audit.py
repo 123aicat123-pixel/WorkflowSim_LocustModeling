@@ -245,13 +245,15 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('input',type=pathlib.Path)
     parser.add_argument('output',type=pathlib.Path)
-    parser.add_argument('--phase',choices=['development','validation','scale50'],default='development')
+    parser.add_argument('--phase',choices=['development','validation','scale50','scale100'],default='development')
     parser.add_argument('--source-run',type=int,default=41580592118)
     args=parser.parse_args()
     if args.phase=='development':
         workflows,seeds=('CyberShake_30','Montage_25','Sipht_30'),(1,2)
     elif args.phase=='validation':
         workflows,seeds=('Epigenomics_24','Inspiral_30'),(41,42,43)
-    else:
+    elif args.phase=='scale50':
         workflows,seeds=('CyberShake_50','Inspiral_50','Montage_50'),(44,45)
+    else:
+        workflows,seeds=('CyberShake_100','Epigenomics_100','Montage_100','Sipht_100'),(46,47)
     analyze(args.input,args.output,workflows,seeds,args.source_run,args.phase)
