@@ -105,6 +105,17 @@ public final class FLAResearchExperiment {
                 assertCostSeedIdentity(fla,nsga);
                 runs.add(fla);
                 runs.add(nsga);
+            } else if ("costseed-factorial".equals(args[5])) {
+                // Controlled 2x2 factorial: the same objective budget and
+                // frozen simulator-HV reference, crossing solver and cost seeds.
+                // No baseline optimizer is silently reconfigured.
+                runs.add(runDag(dax,seed,pop,gens,"v6-pop"));
+                Run seededFla=runDag(dax,seed,pop,gens,"v7-costseed");
+                runs.add(seededFla);
+                runs.add(runNsga(dax,seed,pop,gens,false));
+                Run seededNsga=runNsga(dax,seed,pop,gens,true);
+                assertCostSeedIdentity(seededFla,seededNsga);
+                runs.add(seededNsga);
             } else if ("nsga-only".equals(args[5])) {
                 runs.add(runNsga(dax, seed, pop, gens, false));
             } else if ("nsga-costseed".equals(args[5])) {
