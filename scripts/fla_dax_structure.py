@@ -123,7 +123,7 @@ def inspect_dax(path):
             matched_edges += 1
             for file in common:
                 logical_bytes += producers[a][file]
-                if abs(producers[a][file] - consumers[b][file]) > max(1, producers[a][file] * 1e-9):
+                if producers[a][file] != consumers[b][file]:
                     mismatched_bytes += 1
 
     declared_jobs = root.get("jobCount")
