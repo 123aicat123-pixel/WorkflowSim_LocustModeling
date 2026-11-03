@@ -1,0 +1,40 @@
+name: Read-only Fixed-Task Timeline and Same-VM Order Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-task-order-readonly.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download immutable task-level real WorkflowSim artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41660167042
+          github-token: ${{ github.token }}
+          pattern: fixed-task-timeline-*-41660167042
+          path: original
+      - name: Pure read-only task-ID, VM-order, provenance and timing verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_fixed_task_order_audit.py
+          python3 scripts/fla_fixed_task_order_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis_source_sha.txt
+          printf 'Immutable actual simulator source: 41660167042\n' > reports/original_run.txt
+          cat reports/task_order_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive verified source inputs and every comparison
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-task-order-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
