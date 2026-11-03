@@ -1,0 +1,76 @@
+name: FLA Dual-Worst Next-Instance True-HV Validation
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-dual-worst-next-instance.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  next-instance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        workflow: [Inspiral_50, Epigenomics_24]
+        seed: [501, 502]
+        decoder: [old, worst]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean full Java build and three independent decoder regression oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -name '*.java' -type f | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.DualModelScheduleObjectiveTest > reports/dual-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/stagein-oracle.log
+      - name: Equal 3030 genotype evaluations, two solvers and 32 real simulator replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ '${{ matrix.decoder }}' == worst ]]; then mode=worst; else mode=off; fi
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.dualModelMode="$mode" \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -90 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math
+          def read(path):
+            with open(path,newline='') as f:return list(csv.DictReader(f))
+          summary=read('reports/research_summary.csv')
+          replay=read('reports/research_replays.csv')
+          assert len(summary)==2 and len(replay)==32
+          assert {s['algorithm'] for s in summary}=={'DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          for s in summary:
+            assert (int(s['evaluations']),int(s['captured_evaluations']),int(s['replayed']))==(3030,3030,16),(s['algorithm'],s)
+            arm=[r for r in replay if r['algorithm']==s['algorithm']]
+            assert len(arm)==len({r['mapping'] for r in arm})==16
+            assert [int(r['candidate_index']) for r in arm]==list(range(1,17))
+            assert all(math.isfinite(float(r[k])) and float(r[k])>0 for r in arm for k in ('sim_makespan','sim_cost','planned_makespan','planned_cost'))
+          print('PASS frozen same seed/cost initialization protocol, 3030 evaluations and exactly 16 real replay calls per solver')
+          PY
+          printf 'DAG=%s seed=%s decoder=%s\n' '${{ matrix.workflow }}' '${{ matrix.seed }}' '${{ matrix.decoder }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_DUAL_WORST_NEXT_INSTANCE_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+      - name: Retain full actual simulator K16 and complete search logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-next-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ matrix.decoder }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
