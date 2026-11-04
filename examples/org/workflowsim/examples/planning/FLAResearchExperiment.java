@@ -1221,7 +1221,7 @@ public final class FLAResearchExperiment {
                 Paths.get(prefix+"_staged_selection.csv"),StandardCharsets.UTF_8)) {
             w.write("algorithm,selection_mode,pool_n,old_calls,ready_calls,"
                   +"old_ns,ready_ns,batch_total_ns,screened_indices,selected_indices,"
-                  +"planned_hv,canonical_pool_fingerprint\\n");
+                  +"planned_hv,canonical_pool_fingerprint\n");
             for(Run run:runs) {
                 StagedScheduleBatchEvaluator.SelectionResult r=run.stagedSelection;
                 if(r==null||run.stagedPoolIds.size()!=STAGED_REPLAY_POOL)
@@ -1237,7 +1237,7 @@ public final class FLAResearchExperiment {
                 try{digest=MessageDigest.getInstance("SHA-256");}
                 catch(Exception e){throw new IllegalStateException(e);}
                 for(String key:run.stagedPoolIds)
-                    digest.update((key+"\\n").getBytes(StandardCharsets.UTF_8));
+                    digest.update((key+"\n").getBytes(StandardCharsets.UTF_8));
                 StringBuilder hex=new StringBuilder();
                 for(byte v:digest.digest())hex.append(String.format(Locale.ROOT,"%02x",v&0xff));
                 w.write(String.format(Locale.ROOT,
