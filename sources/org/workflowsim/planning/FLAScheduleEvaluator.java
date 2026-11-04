@@ -85,6 +85,8 @@ public final class FLAScheduleEvaluator {
     private ReadyQueueScheduleEvaluator.Result lastReadyQueueResult;
     /** Explicitly selected research-only dual-model objective, OFF by default. */
     private final DualModelScheduleObjective dualModelObjective;
+    /** Shared opt-in during-evolution fidelity; separate from post-search K replay. */
+    private final BudgetedEvolutionFidelityObjective evolutionaryFidelity;
     /** Optional model parity switch: -Dworkflowsim.planningStageInAware=true */
 
     /** Defaults to validated earliest insertion and no extra PE rejection.
@@ -151,6 +153,8 @@ public final class FLAScheduleEvaluator {
         dualModelObjective="off".equals(dualMode)?null:
                 new DualModelScheduleObjective(taskOrder,vmList,
                         DualModelScheduleObjective.parseMode(dualMode));
+        evolutionaryFidelity=BudgetedEvolutionFidelityObjective.configured(
+                taskOrder,vmList,Integer.getInteger("dagfla.evolutionTotalVisits",3030));
     }
 
     public List<Task> getTaskOrder() { return taskOrder; }
@@ -401,7 +405,10 @@ public final class FLAScheduleEvaluator {
             cost+=d*vmPrice[v];
             makespan=Math.max(makespan,fin);
         }
-        if(dualModelObjective!=null) {
+        if(evolutionaryFidelity!=null) {
+            double[] mixed=evolutionaryFidelity.evaluate(toAssignment(g));
+            makespan=mixed[0];cost=mixed[1];
+        } else if(dualModelObjective!=null) {
             double[] robust=dualModelObjective.evaluate(toAssignment(g));
             makespan=robust[0];
             cost=robust[1];
