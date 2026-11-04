@@ -1,0 +1,40 @@
+name: Independent Active Uniform T8 K8 Actual HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-active-uniform-k8-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  frozen-source-reconstruction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download every original active and control K8 source artifact
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41821482575
+          github-token: ${{ github.token }}
+          pattern: fla-active-uniform-k8-*-41821482575
+          path: original
+      - name: Reject incomplete source; independently compute original actual WorkflowSim HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_active_uniform_k8_actual_hv_audit.py
+          python3 scripts/fla_active_uniform_k8_actual_hv_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_ACTIVE_UNIFORM_RESIDUAL_K8_FROZEN_2026-11-04.md reports/frozen-protocol.md
+          cat reports/true_k8_active_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain paired real results and adverse outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-active-uniform-independent-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
