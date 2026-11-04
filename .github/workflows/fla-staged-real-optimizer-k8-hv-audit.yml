@@ -1,0 +1,41 @@
+name: Read-only 288 Source WorkflowSim Staged K8 Common-Reference HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-staged-real-optimizer-k8-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  independent-actual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve all 18 original source jobs with 288 actual simulator replays
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41777916573
+          github-token: ${{ github.token }}
+          pattern: fla-staged-real-k8-*-41777916573
+          path: original
+      - name: Validate complete equal-budget original source and common true K8 HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_staged_real_optimizer_k8_actual_audit.py
+          python3 scripts/fla_staged_real_optimizer_k8_actual_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          echo 'Frozen source: 41777916573; failed original serialization run: 41777491741' > reports/original-source.txt
+          cp docs/FLA_STAGED_REAL_OPTIMIZER_K8_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+          cat reports/staged_real_optimizer_true_hv_and_cost_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve original per-solver all-case negative and positive normalized actual HV
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-staged-real-k8-independent-true-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
