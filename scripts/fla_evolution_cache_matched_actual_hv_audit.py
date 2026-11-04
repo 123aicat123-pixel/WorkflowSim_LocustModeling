@@ -166,7 +166,6 @@ def main(root,out):
        "",
        "| DAG | Seed | Solver | OLD cached HV | FULL READY cached HV | PERIODIC HV | RISK HV | PERIODIC READY calls | RISK READY calls |",
        "|---|---:|---|---:|---:|---:|---:|---:|---:|"]
-    ]
     for dag,seed in itertools.product(DAGS,SEEDS):
         for solver in SOLVERS:
             g={r["mode"]:r for r in all_rows if (r["workflow"],r["seed"],r["solver"])==(dag,seed,solver)}
