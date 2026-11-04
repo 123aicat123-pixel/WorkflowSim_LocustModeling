@@ -29,12 +29,18 @@ public final class StagedScheduleBatchEvaluator {
         SelectionResult(GreedyStagedParetoSelector.Refined selection,
                         List<Map<Integer,Integer>> choices,
                         int oldCalls,int readyCalls,long oldNanos,long readyNanos,long totalNanos) {
-            this.screened=selection.screened.clone();
-            this.selected=selection.selected.clone();
+            this(selection.screened,selection.selected,selection.predictedHypervolume,
+                 choices,oldCalls,readyCalls,oldNanos,readyNanos,totalNanos);
+        }
+        SelectionResult(int[] screen,int[] selected,double predictedHV,
+                        List<Map<Integer,Integer>> choices,
+                        int oldCalls,int readyCalls,long oldNanos,long readyNanos,long totalNanos) {
+            this.screened=screen.clone();
+            this.selected=selected.clone();
             this.chosenMappings=new ArrayList<>();
             for(int id:this.selected)
                 this.chosenMappings.add(new HashMap<>(choices.get(id)));
-            this.predictedHypervolume=selection.predictedHypervolume;
+            this.predictedHypervolume=predictedHV;
             this.oldCalls=oldCalls;
             this.readyCalls=readyCalls;
             this.oldNanos=oldNanos;
@@ -46,6 +52,49 @@ public final class StagedScheduleBatchEvaluator {
     public StagedScheduleBatchEvaluator(List<Task> tasks,List<CondorVM> vmPool) {
         this.old=new StageInAwareScheduleEvaluator(tasks,vmPool);
         this.ready=new ReadyQueueScheduleEvaluator(tasks,vmPool);
+    }
+
+    /**
+     * Paired model-only controls, applied AFTER search on the EXACT SAME
+     * genotype list as staged. Both use OLD-only reference; the full-ready
+     * control spends N READY calls, while OLD-only spends zero.
+     */
+    public SelectionResult selectControl(List<Map<Integer,Integer>> genotypes,
+                                         String mode,int finalK) {
+        if(genotypes==null||genotypes.isEmpty()||finalK<1||
+            finalK>genotypes.size()||
+            !("old-greedy".equals(mode)||"ready-greedy".equals(mode)))
+            throw new IllegalArgumentException("Invalid control mode or K");
+        long start=System.nanoTime();
+        double[][] cheap=new double[genotypes.size()][2];
+        double mMax=0,cMax=0;
+        for(int i=0;i<cheap.length;i++){
+            StageInAwareScheduleEvaluator.Result p=old.evaluate(genotypes.get(i));
+            cheap[i][0]=p.makespan;cheap[i][1]=p.cost;
+            mMax=Math.max(mMax,p.makespan);
+            cMax=Math.max(cMax,p.cost);
+        }
+        long afterOld=System.nanoTime();
+        double[] reference={1.5*mMax+1e-6,1.5*cMax+1e-6};
+        double[][] ranking=cheap;
+        int calls=0;
+        long readyNs=0;
+        if("ready-greedy".equals(mode)) {
+            ranking=new double[cheap.length][2];
+            for(int i=0;i<ranking.length;i++){
+                long begin=System.nanoTime();
+                ReadyQueueScheduleEvaluator.Result p=ready.evaluate(genotypes.get(i));
+                readyNs+=System.nanoTime()-begin;
+                ranking[i][0]=p.makespan;ranking[i][1]=p.cost;
+                calls++;
+            }
+        }
+        GreedyStagedParetoSelector.Selection selected=
+            GreedyStagedParetoSelector.select(ranking,finalK,reference);
+        long end=System.nanoTime();
+        return new SelectionResult(new int[0],selected.selected,
+            selected.predictedHypervolume,genotypes,cheap.length,calls,
+            afterOld-start,readyNs,end-start);
     }
 
     /**
