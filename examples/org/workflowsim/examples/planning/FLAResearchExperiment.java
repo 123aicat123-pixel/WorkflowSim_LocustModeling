@@ -126,10 +126,10 @@ public final class FLAResearchExperiment {
             if(!Boolean.getBoolean("dagfla.stagedReplayContext")||
                BUDGET_REPLAY_K!=8 || STAGED_REPLAY_POOL!=32||
                STAGED_REPLAY_T!=8 ||
-               !Arrays.asList("old-greedy","ready-greedy","staged-greedy").contains(BUDGET_REPLAY_POLICY))
+               !Arrays.asList("old-greedy","ready-greedy","staged-greedy","active-uniform-greedy").contains(BUDGET_REPLAY_POLICY))
                 throw new IllegalArgumentException("Frozen staged K8/T8/32 context/policy required");
         }
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy","active-uniform-greedy").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off"))) {
             // Explicit prospective K16 confirmation is isolated from all
@@ -1230,9 +1230,12 @@ public final class FLAResearchExperiment {
         StagedScheduleBatchEvaluator.SelectionResult selected=
                 "staged-greedy".equals(mode)
                     ?eval.select(genotype,STAGED_REPLAY_T,budget)
+                    :"active-uniform-greedy".equals(mode)
+                    ?eval.selectActiveUniform(genotype,STAGED_REPLAY_T,budget)
                     :eval.selectControl(genotype,mode,budget);
         run.stagedSelection=selected;
-        int highExpected="staged-greedy".equals(mode)?STAGED_REPLAY_T:
+        int highExpected=("staged-greedy".equals(mode)||
+                          "active-uniform-greedy".equals(mode))?STAGED_REPLAY_T:
                           "ready-greedy".equals(mode)?STAGED_REPLAY_POOL:0;
         if(selected.oldCalls!=STAGED_REPLAY_POOL||
            selected.readyCalls!=highExpected||selected.selected.length!=budget)
