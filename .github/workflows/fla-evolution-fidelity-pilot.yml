@@ -1,0 +1,101 @@
+name: FLA NSGA First During-Evolution Fidelity Pilot K8
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-evolution-fidelity-pilot.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  equal-search-actual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [CyberShake_50, Sipht_60]
+        treatment: [old, full-ready, periodic, risk]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean whole Java compile and independent budget regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.BudgetedEvolutionFidelityObjectiveTest > reports/evolution-budget-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/old-decoder-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-decoder-unit.log
+      - name: Actual evolutionary fitness objective FLA vs cost-seeded NSGA-II
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.treatment }}' in
+            old) ready=false; fidelity=off ;;
+            full-ready) ready=true; fidelity=off ;;
+            periodic) ready=false; fidelity=periodic ;;
+            risk) ready=false; fidelity=risk ;;
+            *) exit 1 ;;
+          esac
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective="$ready" \
+            -Ddagfla.evolutionFidelity="$fidelity" \
+            -Ddagfla.evolutionTotalVisits=3030 \
+            -Ddagfla.evolutionReadyBudget=378 \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Ddagfla.budgetReplayK=8 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' 801 30 100 reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -90 reports/experiment.log;exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,pathlib
+          root=pathlib.Path('reports')
+          def read(name):
+              with (root/name).open(newline='') as f:return list(csv.DictReader(f))
+          summary=read('research_summary.csv')
+          replays=read('research_replays.csv')
+          labels={'DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(summary)==2 and {x['algorithm'] for x in summary}==labels
+          assert len(replays)==16
+          for s in summary:
+              assert (int(s['population']),int(s['generations']),
+                      int(s['evaluations']),int(s['captured_evaluations']),
+                      int(s['replayed']))==(30,100,3030,3030,8),s
+              points=[r for r in replays if r['algorithm']==s['algorithm']]
+              assert len(points)==8 and len({r['mapping'] for r in points})==8
+              assert all(math.isfinite(float(r[z])) and float(r[z])>0
+                     for r in points for z in ('sim_makespan','sim_cost'))
+          mode='${{ matrix.treatment }}'
+          if mode in ('periodic','risk'):
+              trace=read('research_evolution_fidelity.csv')
+              assert len(trace)==2 and {x['algorithm'] for x in trace}==labels
+              for x in trace:
+                  assert x['mode']==mode
+                  assert int(x['visits'])==3030
+                  assert int(x['ready_budget'])==378
+                  assert 0<=int(x['ready_calls'])<=378
+                  assert int(x['cheap_calls'])+int(x['cache_hits'])==3030
+                  assert int(x['cheap_calls'])==int(x['distinct'])
+          else:
+              assert not (root/'research_evolution_fidelity.csv').exists()
+          print('PASS freeze: two exact solver histories of 3030 visits and K8 real simulator replay each; mode',mode)
+          PY
+          printf 'DAG=%s seed=801 treatment=%s K=8 fitness_visits=3030 ready_quota=378\n' \
+             '${{ matrix.workflow }}' '${{ matrix.treatment }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_EVOLUTION_FIDELITY_FIRST_GATE_FROZEN_2026-11-04.md reports/frozen-protocol.md
+      - name: Archive original real simulator points and every cheap/ready evolution budget
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-evolution-fidelity-${{ matrix.workflow }}-${{ matrix.treatment }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
