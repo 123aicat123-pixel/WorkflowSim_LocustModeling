@@ -1,0 +1,21 @@
+# Frozen first per-genotype evolutionary dual-fidelity objective pilot (2026-11-04)
+
+## Research hypothesis, first gate, NOT a novel algorithm announcement
+
+The previous completed [288-true-WorkflowSim K8 staged post-search experiment](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41778249874) found post-search compute savings but no robust FLA-v12 HV gain. This pilot tests the strictly different idea of **budgeted READY fidelity DURING original FLA and seeded NSGA-II evolution**.
+
+Target instances: `CyberShake_50` and `Sipht_60`, original seed **801**, 16 default VMs and FIFO runtime, `v12-nsga-ready-pair` with population=30, generations=100, exactly 3030 original counted genotype fitness evaluations per optimizer, replay K=8 actual WorkflowSim assignments per solver with unchanged original planned-only `pareto-cover` replay policy. Experimental arms for BOTH optimizers:
+1. `old`: original StageIn insertion objective (no new code selected).
+2. `full-ready`: original READY TaskID objective (no budget; existing mode).
+3. `periodic`: original StageIn cheap score computed every evaluation plus at most **378 READY** calls (12.48% of 3030 evaluations) on the first unseen mapping eligible for an evaluation-index budget token; tokens released by `floor(eval_index * 378/3030)`. No peeking at simulator truth.
+4. `risk`: identical stage-in and READY budgets but the READY call is also gated by *cheap predicted Pareto non-domination or epsilon-nearness to the existing cheap nondominated skyline* (relative 1% on both objectives), before that candidate enters skyline. No future true simulator outcomes. This simple Pareto-nearness rule is a diagnostic, not a novel theorem; the two modes may use fewer than 378 READY calls and exact call counts must be reported.
+
+Both experimental arms must use the SAME shared `BudgetedEvolutionFidelityObjective` implementation instantiated independently by the FLA and NSGA decoders. The original TaskID VM assignment controls the READY cost/makespan. If the same physical mapping is evaluated again in the same optimizer run, **its first returned mixed-fidelity fitness is reused** even though original evaluation-counter bookkeeping continues to count the visit; this is essential to keep one task assignment from gaining contradictory Pareto ranks. The high-fidelity budget is hard capped and MUST never exceed cumulative earned tokens. Every cheap StageIn decoder call and READY call is recorded. No full-READY or old-only default is altered.
+
+Stop and fail on: stale evaluator state across optimizer runs, budget token overspend, duplicate mapping inconsistency, nonfinite objectives, changed source population / cost-seeded initialization, mismatched original counted 3030 evaluations, missing planned-only exact-assignment replay or mismatched source results.
+
+Scientific comparison: 2 DAG × 1 seed × 4 modes × 2 solvers × 8 true simulator replays = **128 true WorkflowSim runs** in 8 paired jobs, plus paired source optimizer runs at the same nominal 3030 fitness evaluations. Count extra cheap/READY calls separately, measure true search wall-time and normal K8 true simulator makespan/cost, use one common true normalized 1.5× (3.0× sensitivity) HV reference from all 8 algorithm×mode real K8 fronts inside each workflow block, NOT the historically run-local summary HV.
+
+**Important limitations, pre-registered:** This mixed-fidelity objective is not guaranteed to be a coherent globally comparable fitness model: equal old-fidelity and ready-fidelity objective values can differ, creating ranking distortions even with consistent genotype caching. A favorable mean HV is not enough: look for correlated negative cases, FLA-v12 vs NSGA controls, observed READY call count, and compute-time overhead. This two-DAG single-seed developer pilot is too small for SCI publication; no statistical inference, no Q1 generalization, no unseen-family holdout and no upgrade to FLA v20.
+
+The task is expressly an opt-in engineering gate on `fla-baseline`; `master`, FIFO default, original full READY, original FLA and NSGA-II remain unchanged. A negative result must be archived without tuning risk epsilon or budgets after observing truth.
