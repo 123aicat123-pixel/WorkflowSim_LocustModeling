@@ -1,0 +1,46 @@
+name: FLA Staged Decoder Actual Java Model-Cost Microbenchmark
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-staged-java-cost.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  actual-decoder-timing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean compile of all original Java sources and regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/old-ready-regression.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/stagein-regression.log
+      - name: Time actual StageIn and Ready decoder implementations on fixed synthetic DAGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Xms128m -Xmx1024m -cp 'build/classes:lib/*' \
+            org.workflowsim.planning.StagedDecoderJavaCostBenchmark \
+            reports/all_108_java_decoder_timing_rounds.csv \
+            | tee reports/java-benchmark.log
+          python3 -m py_compile scripts/fla_staged_decoder_java_cost_report.py
+          python3 scripts/fla_staged_decoder_java_cost_report.py \
+            reports/all_108_java_decoder_timing_rounds.csv reports \
+            | tee reports/stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_STAGED_DECODER_JAVA_COST_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-benchmark-protocol.md
+          cat reports/java_model_cost_microbenchmark_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve every measured round, negative compute saving and Java regression logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-staged-java-microcost-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
