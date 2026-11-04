@@ -1,0 +1,41 @@
+name: Read-only actual runtime priority Decision Rank and Regret Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-decision-rank.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download complete eight original new-instance simulator artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41682109356
+          github-token: ${{ github.token }}
+          pattern: fla-new-instance-priority-*-41682109356
+          path: original
+      - name: Validate true policy ranks and model regret without any simulator rerun
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_priority_decision_rank_audit.py
+          python3 scripts/fla_priority_decision_rank_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-sha.txt
+          echo 'Original source actual 24 simulations = 41682109356' > reports/source-action.txt
+          cp docs/FLA_PRIORITY_DECISION_RANK_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+          cat reports/policy_decision_rank_and_regret_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all actual and predicted signed decisions and negative cases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-priority-decision-rank-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
