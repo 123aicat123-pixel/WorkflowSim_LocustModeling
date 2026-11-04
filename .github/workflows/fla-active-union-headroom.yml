@@ -1,0 +1,39 @@
+name: Posthoc Active Selector True-HV Headroom Diagnostic
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-active-union-headroom.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  frozen-true-union:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve complete original 24 independent real-replay artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41821482575
+          github-token: ${{ github.token }}
+          pattern: fla-active-uniform-k8-*-41821482575
+          path: original
+      - name: Reconstruct observed union ceiling and hindsight greedy mapping overlap
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_active_union_headroom_audit.py
+          python3 scripts/fla_active_union_headroom_audit.py original reports | tee reports/headroom.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cat reports/posthoc_headroom_scope.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive source-derived posthoc results and limitations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-active-retrospective-headroom-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
