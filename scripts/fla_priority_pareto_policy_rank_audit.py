@@ -107,6 +107,22 @@ def main(root,out):
         report.append(f"| {x['workflow']} | {x['mapping']} | {x['predicted_nd']} | {x['actual_nd']} | "
            f"{x['nd_jaccard']:.3f} | {x['pairs_misclassified']} | "
            f"{x['selected_coverage_1.5']:.6f} | {x['fifo_coverage_1.5']:.6f} |")
+    report+=["",
+       "## Materiality of exact Pareto disagreements (absolute true objective separation)",
+       "Note: this is a post-hoc descriptive stratification; the preregistration required reporting 0.01% and 0.1% epsilon context. Neither threshold magically resolves the full two-objective tradeoff.",
+    ]
+    for tolerance in (0.01,0.1):
+        flagged=[p for p in pairs if max(p["true_abs_makespan_diff_pct"],p["true_abs_cost_diff_pct"])>tolerance]
+        errors=[p for p in flagged if p["misclassified"]]
+        report.append(f"- At least one actual objective differs by more than {tolerance}%: "
+            f"{len(flagged)}/36 pairs; exact Pareto classification disagreement "
+            f"{len(errors)}/{len(flagged) if flagged else 0} such material pairs.")
+        for error in errors:
+            report.append(f"  - {error['workflow']} {error['mapping']} "
+               f"{error['policy_a']} vs {error['policy_b']}: "
+               f"real M separation {error['true_abs_makespan_diff_pct']:.6f}%, "
+               f"real Cost separation {error['true_abs_cost_diff_pct']:.6f}%, "
+               f"predicted {error['predicted_class']} vs actual {error['actual_class']}.")
     report+=["",f"Mean actual HV coverage by model-selected nondominated policies {statistics.mean(x['selected_coverage_1.5'] for x in groups):.6f}, by unconditional FIFO {statistics.mean(x['fifo_coverage_1.5'] for x in groups):.6f}.",
        f"Cases model-selected actual HV higher than FIFO: {sum(x['selected_minus_fifo_hv_1.5']>1e-10 for x in groups)}/12; equal: {sum(abs(x['selected_minus_fifo_hv_1.5'])<=1e-10 for x in groups)}/12; lower: {sum(x['selected_minus_fifo_hv_1.5']< -1e-10 for x in groups)}/12.",
        "", "## Errors including known negative controls"]
