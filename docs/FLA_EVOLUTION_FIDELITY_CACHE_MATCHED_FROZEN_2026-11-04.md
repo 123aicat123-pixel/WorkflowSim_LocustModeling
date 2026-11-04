@@ -1,0 +1,22 @@
+# Frozen cache-matched evolutionary-fidelity comparison — 2026-11-04
+
+**Pre-outcome registration.** The prior true WorkflowSim pilot [41780754595](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41780754595), independent HV [41781120539](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41781120539), tested two DAG instances, seed 801, FULL OLD/FULL READY without a first-fitness genotype cache against PERIODIC/RISK using a cache. Consequently nominal 3030 fitness *visits* did not imply the same number of decoder calls. The prior result is not an unbiased model-selection result. This frozen protocol specifically isolates caching fairness and preserves failures.
+
+## Same source and experimental arms
+- DAGs CyberShake_50 and Sipht_60 (known development families, NOT unseen holdouts), random seeds 801 and 802, 16 default VMs, original FIFO true simulator. Two solvers: FLA-v12 and NSGA-II[costseed] with original same seeded initial pair, pop30 × (gen100 + init) = **3030 counted genotype visits** each.
+- K=8 real prospective simulator replays from original `pareto-cover` strategy, based only on visited planned objective scores. All source Task ID→VM mappings must be complete and distinct. **2 DAG ×2 seed ×4 arms ×2 solvers × K8 = 256 true WorkflowSim replays** in 16 source jobs, if successful.
+- Four **same-cache** arms, independently initialized per solver/run, all use *exactly the same first-write canonical physical mapping key* and the same counted-visit limiter, no simulator labels in optimization:
+  1. `old-cached`: one StageIn READY-independent old decoder call per distinct mapping; no READY calls, duplicate visits return frozen old scores.
+  2. `ready-cached`: one READY TaskID decoder call per distinct mapping; no OLD calls, duplicate visits return frozen ready scores. Allowed high model budget 3030 because this is the full-fidelity control.
+  3. `periodic`: every distinct mapping gets one OLD call and a READY call only if the cumulative earned budget permits, with a strict high-fidelity quota 378 and fixed first-fitness caching.
+  4. `risk`: same max 378 READY and same caching, but the fixed 1%-near-cheap-Pareto skyline first-seen test determines whether to spend an earned token. No outcome-driven changes to gate or thresholds.
+- All four arms use exactly the SAME `BudgetedEvolutionFidelityObjective` class and opt-in constructor; no `useReadyQueueObjective` or dual-model objective switch. `FLAScheduleEvaluator` and NSGA decoder still perform their standard internal mandatory common unified evaluation before the opt-in evaluator, so an equal counted visit does **not** imply matched total CPU time.
+- Per solver & arm assert: 3030 visits, `cheapCalls+readyCalls` appropriate to mode, `cacheHits = visits - distinctPhysicalMappings`, duplicate map returns first fixed (M,C) scores, zero score replacement upon revisit, strict earned-token bounds for 378 modes, and all objective results finite positive. For OLD-CACHED: cheapCalls=distinct, READY=0, maxREADY=0. For READY-CACHED: cheapCalls=0, READY=distinct, maxREADY=3030. For hybrid: cheapCalls=distinct, READY≤378; near-gate skips and model nanoseconds archived.
+
+## Metrics and fail-closed audit
+- Compute **one common 1.5× true reference and one 3.0× sensitivity reference per (DAG,seed)** from all EIGHT solver×mode K8 true replays, never compare per-job self-referenced simulated HV.
+- Report actual normalized Pareto HV, minimum real Makespan and Cost, actual ND count, pairwise differences vs OLD-CACHED and READY-CACHED, original search ms, old and ready model nanoTime and cache hit rate. Preserve negative/tied cases.
+- Compare matched cached baselines on seed801 against previous unmatched experiments only as **descriptive** mechanism diagnostics; the optimizer trajectory can change due to reuse of cached genotype evaluations, so no direct causal speedup attribution.
+- All outcomes are on TWO historically familiar DAX families with just 2 seeds. No formal significance, independent-family generalization, runtime CPU parity, or SCI publication-ready claim.
+- If mixed fidelity still fails to beat both cached controls robustly, reject it as the next FLA innovation point; investigate objective comparability and confidence bounds rather than tuning fixed 1% risk parameter on these outcomes.
+- Keep `master`, original FIFO, FLA-v12 and seeded NSGA-II defaults unchanged. All source, tests, configs and reports only in `fla-baseline`. No user action needed.
