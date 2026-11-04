@@ -33,7 +33,7 @@ def audit(probed,control,k,pairs=2):
     assert len(probe)==2*pairs, ("Wrong number of real optimizer probe rows",len(probe))
     assert set(row["algorithm"] for row in probe)=={key[0] for key in fa}, "Missing/unknown probe solver"
     for alg in fa:
-        records=[row for row in probe if row["algorithm"]==alg]
+        records=[row for row in probe if row["algorithm"]==alg[0]]
         assert len(records)==pairs, (alg,"Missing probe candidate pairs")
         assert [int(row["pair"]) for row in records]==list(range(1,pairs+1))
         physical=set()
