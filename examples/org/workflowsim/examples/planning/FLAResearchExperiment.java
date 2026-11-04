@@ -28,6 +28,7 @@ import org.workflowsim.planning.NSGAIIPlanningAlgorithm;
 import org.workflowsim.planning.UnifiedCandidateRecorder;
 import org.workflowsim.planning.ReplayReliabilityGate;
 import org.workflowsim.planning.StagedScheduleBatchEvaluator;
+import org.workflowsim.planning.BudgetedEvolutionFidelityObjective;
 import org.workflowsim.Task;
 import org.workflowsim.CondorVM;
 import org.workflowsim.utils.Parameters;
@@ -104,6 +105,7 @@ public final class FLAResearchExperiment {
         List<Task> stagedReplayTasks;
         List<CondorVM> stagedReplayVms;
         StagedScheduleBatchEvaluator.SelectionResult stagedSelection;
+        BudgetedEvolutionFidelityObjective.Snapshot evolutionFidelity;
         final List<String> stagedPoolIds = new ArrayList<>();
         List<double[]> populationDiagnostics = Collections.emptyList();
         Run(String name) { algorithm = name; }
@@ -128,6 +130,14 @@ public final class FLAResearchExperiment {
         }
         if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
+        if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off"))) {
+            if(BUDGET_REPLAY_K!=8 ||
+               !"pareto-cover".equals(BUDGET_REPLAY_POLICY) ||
+               pop!=30||gens!=100||
+               Integer.getInteger("dagfla.evolutionTotalVisits",3030)!=3030 ||
+               Integer.getInteger("dagfla.evolutionReadyBudget",378)!=378)
+                throw new IllegalArgumentException("Frozen evolutionary budget: pop30 gen100 K8 quota378");
+        }
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
         if (BUDGET_REPLAY_REPLICATE < 0 || BUDGET_REPLAY_REPLICATE > 1024)
@@ -421,6 +431,8 @@ public final class FLAResearchExperiment {
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
         if(BUDGET_REPLAY_K>0 && BUDGET_REPLAY_POLICY.endsWith("-greedy"))
             saveStagedReplaySelection(prefix,runs);
+        if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off")))
+            saveEvolutionFidelity(prefix,runs);
         if(Boolean.getBoolean("dagfla.populationDiagnostics"))
             savePopulationDiagnostics(prefix,runs,gens,pop);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
@@ -608,6 +620,7 @@ public final class FLAResearchExperiment {
                 "v2-immigrants".equals(variant) || "v2".equals(variant);
         DAGParetoFLAPlanningAlgorithm.CONFIG_ARCHIVE_CAPACITY = Math.max(pop, 32);
         DAGParetoFLAPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS = null;
+        BudgetedEvolutionFidelityObjective.clearCurrent();
         UnifiedCandidateRecorder.begin((long)pop*(gens+2));
         UnifiedCandidateRecorder.phase("DAG-FLA-"+variant);
         LIWSABenchmarkExample.RunResult result = LIWSABenchmarkExample.runPlanning(
@@ -623,6 +636,8 @@ public final class FLAResearchExperiment {
         r.evals=capture.evaluationCount();r.searchMs=m.searchWallClockMillis;
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
+        r.evolutionFidelity=BudgetedEvolutionFidelityObjective.currentSnapshot();
+        BudgetedEvolutionFidelityObjective.clearCurrent();
         if(Boolean.getBoolean("dagfla.stagedReplayContext")){
             r.stagedReplayTasks=capture.replayTasks();
             r.stagedReplayVms=capture.replayVms();
@@ -642,6 +657,7 @@ public final class FLAResearchExperiment {
         NSGAIIPlanningAlgorithm.CONFIG_OUTPUT_ARCHIVE=true;
         NSGAIIPlanningAlgorithm.CONFIG_SEED_ASSIGNMENTS=null;
         NSGAIIPlanningAlgorithm.CONFIG_COST_SEEDING=costSeeded;
+        BudgetedEvolutionFidelityObjective.clearCurrent();
         UnifiedCandidateRecorder.begin((long)pop*(gens+2));
         UnifiedCandidateRecorder.phase(costSeeded ? "NSGA-II-costseed" : "NSGA-II");
         LIWSABenchmarkExample.RunResult result=LIWSABenchmarkExample.runPlanning(
@@ -656,6 +672,8 @@ public final class FLAResearchExperiment {
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
         r.searchMs=m.searchWallClockMillis;
+        r.evolutionFidelity=BudgetedEvolutionFidelityObjective.currentSnapshot();
+        BudgetedEvolutionFidelityObjective.clearCurrent();
         if(Boolean.getBoolean("dagfla.stagedReplayContext")){
             r.stagedReplayTasks=capture.replayTasks();
             r.stagedReplayVms=capture.replayVms();
@@ -1213,6 +1231,27 @@ public final class FLAResearchExperiment {
             run.algorithm,mode,pool.size(),budget,selected.oldCalls,
             selected.readyCalls,selected.totalNanos);
         return out;
+    }
+
+    private static void saveEvolutionFidelity(Path prefix,List<Run> runs)
+            throws IOException {
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_evolution_fidelity.csv"),StandardCharsets.UTF_8)) {
+            w.write("algorithm,mode,visits,cheap_calls,ready_calls,cache_hits,distinct,"
+                  +"ready_budget,near_gate_skips,cheap_ns,ready_ns\\n");
+            for(Run run:runs) {
+                BudgetedEvolutionFidelityObjective.Snapshot x=run.evolutionFidelity;
+                if(x==null||x.visits!=run.evals||
+                   x.cheapCalls+x.cacheHits!=x.visits||
+                   x.readyCalls>x.maxReadyCalls)
+                    throw new IllegalStateException("Invalid evolutionary fidelity trace "+run.algorithm);
+                w.write(String.format(Locale.ROOT,
+                    "%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d%n",
+                    run.algorithm,x.mode,x.visits,x.cheapCalls,x.readyCalls,
+                    x.cacheHits,x.distinct,x.maxReadyCalls,x.nearGateSkips,
+                    x.cheapNanos,x.readyNanos));
+            }
+        }
     }
 
     private static void saveStagedReplaySelection(Path prefix,List<Run> runs)
