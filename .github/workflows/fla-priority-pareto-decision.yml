@@ -1,0 +1,41 @@
+name: Read-only Fixed Mapping Three-Policy Actual Pareto Decision Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-priority-pareto-decision.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  actual-pareto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all three original 36-policy forecast+actual simulator artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41681448520
+          github-token: ${{ github.token }}
+          pattern: fla-priority-forecast-*-41681448520
+          path: original
+      - name: Validate all actual-vs-planned Pareto rankings and same-group real HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_priority_pareto_policy_rank_audit.py
+          python3 scripts/fla_priority_pareto_policy_rank_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_PRIORITY_PARETO_POLICY_RANK_FROZEN_2026-11-04.md reports/preregistered-protocol.md
+          echo 'Original 36 true simulator calls 41681448520' > reports/original-run.txt
+          cat reports/three_policy_true_pareto_rank_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all original comparisons, including errors and near ties
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-priority-pareto-decision-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
