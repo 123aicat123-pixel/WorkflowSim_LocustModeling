@@ -1,0 +1,101 @@
+name: FLA Active Uniform Residual T8 K8 Real WorkflowSim
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-active-uniform-k8.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  same-optimizer-pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        workflow: [CyberShake_50, Sipht_60, Epigenomics_100]
+        seed: [903, 904]
+        selector: [old-greedy, ready-greedy, staged-greedy, active-uniform-greedy]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean Java compile with OLD, READY and staged adapter oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.GreedyStagedParetoSelectorTest > reports/greedy-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ActiveUniformResidualSelectorTest > reports/active-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StagedScheduleBatchEvaluatorTest > reports/staged-adapter-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-regression.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/stagein-regression.log
+      - name: Exact same original FLA and costseed NSGA search then planned-only 32-pool K8 real replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.stagedReplayContext=true \
+            -Ddagfla.stagedReplayPool=32 \
+            -Ddagfla.stagedReplayT=8 \
+            -Ddagfla.budgetReplayK=8 \
+            -Ddagfla.budgetReplayPolicy='${{ matrix.selector }}' \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -110 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,pathlib
+          r=pathlib.Path('reports')
+          def load(f):
+              with (r/f).open(newline='') as stream:return list(csv.DictReader(stream))
+          summary=load('research_summary.csv')
+          replay=load('research_replays.csv')
+          selected=load('research_staged_selection.csv')
+          expected={'DAG-Pareto-FLA[v12-hvbandit]','NSGA-II[costseed]'}
+          assert len(summary)==len(selected)==2 and len(replay)==16
+          assert {s['algorithm'] for s in summary}==expected
+          assert {s['algorithm'] for s in selected}==expected
+          mode='${{ matrix.selector }}'
+          high={'old-greedy':0,'ready-greedy':32,'staged-greedy':8,'active-uniform-greedy':8}[mode]
+          assert len({s['canonical_pool_fingerprint'] for s in selected})==2 or len(selected)==2
+          for s in summary:
+              assert s['workflow']=='${{ matrix.workflow }}' and s['seed']=='${{ matrix.seed }}'
+              assert (int(s['population']),int(s['generations']),
+                      int(s['evaluations']),int(s['captured_evaluations']),int(s['replayed']))==(30,100,3030,3030,8),s
+              z=[p for p in replay if p['algorithm']==s['algorithm']]
+              assert len(z)==8 and len({p['mapping'] for p in z})==8
+              assert all(math.isfinite(float(p[field])) and float(p[field])>0
+                        for p in z for field in ('sim_makespan','sim_cost','planned_makespan','planned_cost'))
+          for s in selected:
+              assert s['selection_mode']==mode
+              assert (int(s['pool_n']),int(s['old_calls']),int(s['ready_calls']))==(32,32,high)
+              assert len(s['selected_indices'].split('|'))==8
+              if mode in ('staged-greedy','active-uniform-greedy'):assert len(s['screened_indices'].split('|'))==8
+              assert len(s['canonical_pool_fingerprint'])==64
+              assert float(s['planned_hv'])>=0
+          print('PASS: 2 paired original solvers, same counted 3030 search evaluations per solver, unique K8 real simulator assignments; mode',mode,'READY calls',high)
+          PY
+          printf 'DAG=%s seed=%s selector=%s VM=default K=8 pool=32 T=8\n' \
+             '${{ matrix.workflow }}' '${{ matrix.seed }}' '${{ matrix.selector }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_ACTIVE_UNIFORM_RESIDUAL_K8_FROZEN_2026-11-04.md reports/frozen-protocol.md
+      - name: Preserve actual simulator truth, candidate mappings and measured postsearch decoder costs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-active-uniform-k8-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ matrix.selector }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
+
+# Prospective; full original source artifacts and negative outcomes must be retained.
