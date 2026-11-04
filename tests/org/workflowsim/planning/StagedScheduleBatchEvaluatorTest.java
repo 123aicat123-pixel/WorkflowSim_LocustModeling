@@ -51,6 +51,17 @@ public final class StagedScheduleBatchEvaluatorTest {
         if(!Arrays.equals(first.selected,repeat.selected)||
             !Arrays.equals(first.screened,repeat.screened))
             throw new AssertionError("Repeated calls are not reproducible");
+        StagedScheduleBatchEvaluator.SelectionResult active=
+                stage.selectActiveUniform(candidates,2,1);
+        valid(active,4,2,1);
+        StagedScheduleBatchEvaluator.SelectionResult activeAgain=
+                stage.selectActiveUniform(candidates,2,1);
+        valid(activeAgain,4,2,1);
+        if(!Arrays.equals(active.screened,activeAgain.screened)||
+           !Arrays.equals(active.selected,activeAgain.selected))
+            throw new AssertionError("Active model selector is nondeterministic");
+        if(active.screened[0]==active.screened[1])
+            throw new AssertionError("Repeated physical READY model query");
         StagedScheduleBatchEvaluator.SelectionResult another=stage.select(candidates,3,2);
         valid(another,4,3,2);
         valid(stage.select(candidates,4,4),4,4,4);
