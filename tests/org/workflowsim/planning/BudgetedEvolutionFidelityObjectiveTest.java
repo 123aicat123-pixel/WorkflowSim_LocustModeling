@@ -66,6 +66,25 @@ public final class BudgetedEvolutionFidelityObjectiveTest {
            second.distinct!=4)
             throw new AssertionError("Incorrect risk gate budget/caching");
         BudgetedEvolutionFidelityObjective.clearCurrent();
+        for(BudgetedEvolutionFidelityObjective.Mode mode:new BudgetedEvolutionFidelityObjective.Mode[]{
+                BudgetedEvolutionFidelityObjective.Mode.OLD_CACHED,
+                BudgetedEvolutionFidelityObjective.Mode.READY_CACHED}) {
+            BudgetedEvolutionFidelityObjective other=
+                 new BudgetedEvolutionFidelityObjective(tasks,vms,mode,8,
+                     mode==BudgetedEvolutionFidelityObjective.Mode.OLD_CACHED?0:8);
+            List<double[]> seen=new ArrayList<>();
+            for(Map<Integer,Integer> map:series)seen.add(other.evaluate(map));
+            for(int i=0;i<4;i++)if(!Arrays.equals(seen.get(i),seen.get(i+4)))
+                throw new AssertionError("Cached baseline repeat inconsistency");
+            BudgetedEvolutionFidelityObjective.Snapshot snap=other.snapshot();
+            if(snap.visits!=8||snap.distinct!=4||snap.cacheHits!=4||
+               (mode==BudgetedEvolutionFidelityObjective.Mode.OLD_CACHED &&
+                   (snap.cheapCalls!=4||snap.readyCalls!=0))||
+               (mode==BudgetedEvolutionFidelityObjective.Mode.READY_CACHED &&
+                   (snap.cheapCalls!=0||snap.readyCalls!=4)))
+                throw new AssertionError("Cache mismatched baseline budget");
+            BudgetedEvolutionFidelityObjective.clearCurrent();
+        }
         System.out.println("PASS BudgetedEvolutionFidelityObjectiveTest: cached original genotype objective, token releases, both fidelity modes and no simulator oracle");
     }
 }
