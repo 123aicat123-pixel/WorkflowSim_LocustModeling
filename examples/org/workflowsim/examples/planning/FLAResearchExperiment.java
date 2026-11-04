@@ -27,6 +27,9 @@ import org.workflowsim.planning.MLEAOPlanningAlgorithm;
 import org.workflowsim.planning.NSGAIIPlanningAlgorithm;
 import org.workflowsim.planning.UnifiedCandidateRecorder;
 import org.workflowsim.planning.ReplayReliabilityGate;
+import org.workflowsim.planning.StagedScheduleBatchEvaluator;
+import org.workflowsim.Task;
+import org.workflowsim.CondorVM;
 import org.workflowsim.utils.Parameters;
 
 /**
@@ -51,6 +54,9 @@ public final class FLAResearchExperiment {
     /** Independent RANDOM replay draw, fixed at zero for backward compatibility. */
     private static final int BUDGET_REPLAY_REPLICATE =
             Integer.getInteger("dagfla.budgetReplayReplicate", 0);
+    /** Search remains identical; extra post-search greedy replay policy. */
+    private static final int STAGED_REPLAY_T=Integer.getInteger("dagfla.stagedReplayT",8);
+    private static final int STAGED_REPLAY_POOL=Integer.getInteger("dagfla.stagedReplayPool",32);
     /** Include equal planned objectives from distinct assignments in exhaustive audits. */
     private static final boolean SCREENING_INCLUDE_TIES =
             Boolean.getBoolean("dagfla.screeningAuditIncludeTies");
@@ -95,6 +101,10 @@ public final class FLAResearchExperiment {
         double planHv;
         final List<Candidate> feedbackPool = new ArrayList<>();
         final List<String> feedbackTrace = new ArrayList<>();
+        List<Task> stagedReplayTasks;
+        List<CondorVM> stagedReplayVms;
+        StagedScheduleBatchEvaluator.SelectionResult stagedSelection;
+        final List<String> stagedPoolIds = new ArrayList<>();
         List<double[]> populationDiagnostics = Collections.emptyList();
         Run(String name) { algorithm = name; }
     }
@@ -109,7 +119,14 @@ public final class FLAResearchExperiment {
         int gens = Integer.parseInt(args[3]);
         if (pop < 8 || gens < 6) throw new IllegalArgumentException("pop>=8 gens>=6 needed");
         if (SCREENING_AUDIT_N < 0 || SCREENING_AUDIT_N > 256) throw new IllegalArgumentException("invalid diagnostic sample count");
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated").contains(BUDGET_REPLAY_POLICY))
+        if(BUDGET_REPLAY_K>0 && BUDGET_REPLAY_POLICY.endsWith("-greedy")) {
+            if(!Boolean.getBoolean("dagfla.stagedReplayContext")||
+               BUDGET_REPLAY_K!=8 || STAGED_REPLAY_POOL!=32||
+               STAGED_REPLAY_T!=8 ||
+               !Arrays.asList("old-greedy","ready-greedy","staged-greedy").contains(BUDGET_REPLAY_POLICY))
+                throw new IllegalArgumentException("Frozen staged K8/T8/32 context/policy required");
+        }
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
@@ -315,7 +332,9 @@ public final class FLAResearchExperiment {
             List<Candidate> front = feedback
                     ? new ArrayList<>(run.feedbackPool.subList(0,4))
                     : BUDGET_REPLAY_K > 0
-                    ? ("random".equals(BUDGET_REPLAY_POLICY)
+                    ? (BUDGET_REPLAY_POLICY.endsWith("-greedy")
+                        ? budgetedStagedReplay(run,BUDGET_REPLAY_POLICY,BUDGET_REPLAY_K)
+                        : "random".equals(BUDGET_REPLAY_POLICY)
                         ? budgetedRandomVisited(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm)
                         : "scalar-sweep".equals(BUDGET_REPLAY_POLICY)
                             ? budgetedScalarSweep(run.allVisited,BUDGET_REPLAY_K)
@@ -400,6 +419,8 @@ public final class FLAResearchExperiment {
             for (Run run : runs) runScreeningAudit(dax, wf, seed, run, simRef);
         }
         save(wf,seed,pop,gens,cap,prefix,runs,simRef,planRef);
+        if(BUDGET_REPLAY_K>0 && BUDGET_REPLAY_POLICY.endsWith("-greedy"))
+            saveStagedReplaySelection(prefix,runs);
         if(Boolean.getBoolean("dagfla.populationDiagnostics"))
             savePopulationDiagnostics(prefix,runs,gens,pop);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
@@ -602,6 +623,10 @@ public final class FLAResearchExperiment {
         r.evals=capture.evaluationCount();r.searchMs=m.searchWallClockMillis;
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
+        if(Boolean.getBoolean("dagfla.stagedReplayContext")){
+            r.stagedReplayTasks=capture.replayTasks();
+            r.stagedReplayVms=capture.replayVms();
+        }
         saveFirstTwo(r,capture);
         append(r,capture.frontPoints(),capture.frontAssignments());
         appendAuditHistory(r,capture);
@@ -630,7 +655,12 @@ public final class FLAResearchExperiment {
         Run r=new Run(costSeeded ? "NSGA-II[costseed]" : "NSGA-II");r.actualGenerations=String.valueOf(gens);r.evals=capture.evaluationCount();
         r.capturedEvaluations=capture.evaluationCount();
         r.distinctObservedAssignments=capture.distinctAssignments();
-        r.searchMs=m.searchWallClockMillis;saveFirstTwo(r,capture);append(r,capture.frontPoints(),capture.frontAssignments());
+        r.searchMs=m.searchWallClockMillis;
+        if(Boolean.getBoolean("dagfla.stagedReplayContext")){
+            r.stagedReplayTasks=capture.replayTasks();
+            r.stagedReplayVms=capture.replayVms();
+        }
+        saveFirstTwo(r,capture);append(r,capture.frontPoints(),capture.frontAssignments());
         appendAuditHistory(r,capture);
         return r;
     }
@@ -1146,6 +1176,77 @@ public final class FLAResearchExperiment {
         System.out.println("PASS prospective planned-only extreme-band3 replay selection K="+budget
                 +" quota="+quota+" uniqueHistory="+all.size());
         return selected;
+    }
+
+    /** Identical planned-only pool across control and staged selectors. */
+    private static List<Candidate> budgetedStagedReplay(Run run,String mode,int budget) {
+        if(run.stagedReplayTasks==null||run.stagedReplayVms==null)
+            throw new IllegalStateException("No captured optimizer DAG/VM context for staged study");
+        List<Candidate> pool=budgetedPlannedCoverage(run.allVisited,STAGED_REPLAY_POOL);
+        if(pool.size()!=STAGED_REPLAY_POOL)throw new IllegalStateException("Wrong staged candidate pool");
+        List<Map<Integer,Integer>> genotype=new ArrayList<>();
+        for(Candidate c:pool){
+            genotype.add(c.assignment);
+            run.stagedPoolIds.add(canonicalMappingKey(c));
+        }
+        StagedScheduleBatchEvaluator eval=new StagedScheduleBatchEvaluator(
+                    run.stagedReplayTasks,run.stagedReplayVms);
+        StagedScheduleBatchEvaluator.SelectionResult selected=
+                "staged-greedy".equals(mode)
+                    ?eval.select(genotype,STAGED_REPLAY_T,budget)
+                    :eval.selectControl(genotype,mode,budget);
+        run.stagedSelection=selected;
+        int highExpected="staged-greedy".equals(mode)?STAGED_REPLAY_T:
+                          "ready-greedy".equals(mode)?STAGED_REPLAY_POOL:0;
+        if(selected.oldCalls!=STAGED_REPLAY_POOL||
+           selected.readyCalls!=highExpected||selected.selected.length!=budget)
+            throw new IllegalStateException("Exceeded stage replay evaluation budget");
+        Set<Integer> unique=new HashSet<>();
+        List<Candidate> out=new ArrayList<>();
+        for(int idx:selected.selected) {
+            if(idx<0||idx>=pool.size()||!unique.add(idx))
+                throw new IllegalStateException("Repeated physical staged replay map");
+            out.add(pool.get(idx));
+        }
+        System.out.printf(Locale.ROOT,
+            "STAGED_SELECTION,%s,%s,POOL=%d,K=%d,OLD=%d,READY=%d,BATCH_NS=%d%n",
+            run.algorithm,mode,pool.size(),budget,selected.oldCalls,
+            selected.readyCalls,selected.totalNanos);
+        return out;
+    }
+
+    private static void saveStagedReplaySelection(Path prefix,List<Run> runs)
+            throws IOException {
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_staged_selection.csv"),StandardCharsets.UTF_8)) {
+            w.write("algorithm,selection_mode,pool_n,old_calls,ready_calls,"
+                  +"old_ns,ready_ns,batch_total_ns,screened_indices,selected_indices,"
+                  +"planned_hv,canonical_pool_fingerprint\\n");
+            for(Run run:runs) {
+                StagedScheduleBatchEvaluator.SelectionResult r=run.stagedSelection;
+                if(r==null||run.stagedPoolIds.size()!=STAGED_REPLAY_POOL)
+                    throw new IllegalStateException("Uncaptured staged selector evidence");
+                StringBuilder screen=new StringBuilder(),selected=new StringBuilder();
+                for(int x:r.screened) {
+                    if(screen.length()>0)screen.append('|');screen.append(x+1);
+                }
+                for(int x:r.selected) {
+                    if(selected.length()>0)selected.append('|');selected.append(x+1);
+                }
+                MessageDigest digest;
+                try{digest=MessageDigest.getInstance("SHA-256");}
+                catch(Exception e){throw new IllegalStateException(e);}
+                for(String key:run.stagedPoolIds)
+                    digest.update((key+"\\n").getBytes(StandardCharsets.UTF_8));
+                StringBuilder hex=new StringBuilder();
+                for(byte v:digest.digest())hex.append(String.format(Locale.ROOT,"%02x",v&0xff));
+                w.write(String.format(Locale.ROOT,
+                  "%s,%s,%d,%d,%d,%d,%d,%d,%s,%s,%.17g,%s%n",
+                  run.algorithm,BUDGET_REPLAY_POLICY,STAGED_REPLAY_POOL,r.oldCalls,
+                  r.readyCalls,r.oldNanos,r.readyNanos,r.totalNanos,
+                  screen,selected,r.predictedHypervolume,hex.toString()));
+            }
+        }
     }
 
     private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
