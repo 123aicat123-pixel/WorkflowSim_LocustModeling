@@ -96,3 +96,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: warn
+
+# Full frozen study rerun after CSV newline-only serialization fix (no model/search change).
