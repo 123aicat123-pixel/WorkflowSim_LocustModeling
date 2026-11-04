@@ -1,0 +1,41 @@
+name: Read-only 96 Actual WorkflowSim Interval-Dominance Safety Gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-interval-dominance-96.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  frozen-six-blocks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exact six original same-genotype simulator archives
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41695356307
+          github-token: ${{ github.token }}
+          pattern: fla-algorithm-independent-*-41695356307
+          path: original
+      - name: Check frozen planned interval dominance against actual real simulator outcomes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_interval_dominance_96_gate.py
+          python3 scripts/fla_interval_dominance_96_gate.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_INTERVAL_DOMINANCE_96_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+          echo 'Original immutable simulator source: 41695356307' > reports/original-run-id.txt
+          cat reports/interval_dominance_read_only_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all false confident certificates and incomplete coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-interval-dominance-96-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
