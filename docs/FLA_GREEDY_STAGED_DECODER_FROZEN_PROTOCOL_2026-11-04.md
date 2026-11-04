@@ -1,0 +1,17 @@
+# Scalable greedy-HV staged decoder API: frozen design and validation, 2026-11-04
+
+## Why
+Exhaustive `choose(16,K)` screening in old archival study Actions 41775295948 recovered FULL READY HV at K2/T4 and K4/T8 on all six correlated source blocks, and actual Java model-only timing [41775597558](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41775597558) showed substantial savings in 200-task synthetic workloads. But exact combinatorial K-set selection is not scalable to real algorithm population pools. This design is an engineering prerequisite, NOT a paper claim.
+
+## Frozen algorithm, independent of actual simulator labels
+Use a pure Java `GreedyStagedParetoSelector` with `select(double[][] objectives,int K,double[] reference)`: 2D minimization HV increment greedy. Start empty and repeatedly choose the as-yet-unselected candidate with the MAX marginal nonnegative normalized 2D hypervolume, deterministic lowest original index for absolute improvements within 1e-12. All points finite, positive; reference finite positive. Complexity O(N²×K log N) with simple full recomputation per trial, avoiding combinatorial `C(N,K)`. This is a simple **standard greedy selector**; do not claim original invention. Strict ties may favor dominated candidates by ID when marginal=0; that is part of frozen behavior.
+
+`refine(double[][] old, IntFunction<double[]> readyEvaluator, int T, int K,double[] ref)`: call `select(old,T,ref)` FIRST. Only for these T indices invoke the READY callback exactly once, overwrite those T predicted objectives in a clone of OLD, then `select(hybrid,K,ref)`. There must be **exactly T callback calls**, regardless of K (K≤T≤N). The selector must NEVER receive actual WorkflowSim objectives; they appear only in a separate read-only audit. Caller must compute/receive all old predictions separately; the algorithm must not silently evaluate READY for skipped genotypes.
+
+Validation before promoting API:
+1. Pure Java deterministic unit test with small artificial 2D pairs checks monotone feasible HV, deterministic ties, no duplicate outputs, exact T callback IDs, original input unchanged and invalid cases rejected.
+2. On the same six already archived DAX/speed groups and 16 same VM mappings per group, use the validated source [41695356307](https://github.com/123aicat123-pixel/WorkflowSim_LocustModeling/actions/runs/41695356307), K∈{2,4}, T∈{4,8}, OLD-only 1.5× planned common reference. Compare GREEDY-STAGED vs prior exact-STAGED **as a benchmark**, independently score actual HV under the same true 1.5× and 3.0× reference. Also report FULL GREEDY READY and OLD greedy choices, selected index divergence, and any loss. All actual labels used ONLY AFTER greedy model-only selection.
+3. No new optimizer or simulator run; preserve full 24 comparisons, unit failures, code SHA and archived input identity. Call budgets and greedy selections cannot be adapted to outcomes.
+4. No claim of end-to-end FLA or real-DAX timing. A real future integration would need a common callback interface for both FLA and seeded NSGA-II; ensure the optimization search preserves strict genotype accounting plus true K16 HV and identical compute budgets. `master` and original FIFO remain untouched.
+
+**Primary adverse-result rule:** if greedy screening loses materially more actual HV than the exact original staged selector, report the loss, retain the API as a diagnostic only and do not promote it into FLA search.
