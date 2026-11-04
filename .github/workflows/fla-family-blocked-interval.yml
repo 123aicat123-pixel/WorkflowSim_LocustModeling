@@ -1,0 +1,41 @@
+name: Read-only Leave-One-DAG-Family-Out Interval Safety Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-family-blocked-interval.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  leave-one-family:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve six original true WorkflowSim DAX and speed blocks
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41695356307
+          github-token: ${{ github.token }}
+          pattern: fla-algorithm-independent-*-41695356307
+          path: original
+      - name: Audit strict held-out family maximum-error envelopes against true Pareto dominance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_family_blocked_interval_gate.py
+          python3 scripts/fla_family_blocked_interval_gate.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/source-sha.txt
+          echo 'Immutable original true simulator source: 41695356307' > reports/original-source.txt
+          cp docs/FLA_INTERVAL_FAMILY_BLOCKED_FROZEN_2026-11-04.md reports/frozen-protocol.md
+          cat reports/family_blocked_error_interval_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive independent fold failures, source coverage and false-certainty rows
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-family-blocked-interval-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
