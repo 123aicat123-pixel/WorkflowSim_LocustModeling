@@ -20,7 +20,7 @@ import org.workflowsim.Task;
  */
 public final class BudgetedEvolutionFidelityObjective {
     public static final String PROPERTY="dagfla.evolutionFidelity";
-    public enum Mode { PERIODIC, RISK }
+    public enum Mode { OLD_CACHED, READY_CACHED, PERIODIC, RISK }
 
     public static final class Snapshot {
         public final String mode;
@@ -65,10 +65,13 @@ public final class BudgetedEvolutionFidelityObjective {
            !"off".equals(System.getProperty("dagfla.dualModelMode","off")))
             throw new IllegalArgumentException("Evolution fidelity requires insertion baseline, no other objective mode");
         Mode mode;
-        if("periodic".equals(name))mode=Mode.PERIODIC;
+        if("old-cached".equals(name))mode=Mode.OLD_CACHED;
+        else if("ready-cached".equals(name))mode=Mode.READY_CACHED;
+        else if("periodic".equals(name))mode=Mode.PERIODIC;
         else if("risk".equals(name))mode=Mode.RISK;
         else throw new IllegalArgumentException("Unknown evolution fidelity "+name);
-        int quota=Integer.getInteger("dagfla.evolutionReadyBudget",378);
+        int quota=mode==Mode.OLD_CACHED?0:mode==Mode.READY_CACHED?maxVisits:
+                  Integer.getInteger("dagfla.evolutionReadyBudget",378);
         return new BudgetedEvolutionFidelityObjective(tasks,vms,mode,maxVisits,quota);
     }
     public static Snapshot currentSnapshot() {
@@ -112,33 +115,46 @@ public final class BudgetedEvolutionFidelityObjective {
             cacheHits++;
             return prior.clone();
         }
-        long begin=System.nanoTime();
-        StageInAwareScheduleEvaluator.Result cheap=insertion.evaluate(key);
-        cheapNanos+=System.nanoTime()-begin;
-        cheapCalls++;
-        double[] objective={cheap.makespan,cheap.cost};
-        if(!Double.isFinite(objective[0])||objective[0]<=0||
-            !Double.isFinite(objective[1])||objective[1]<=0)
-            throw new IllegalStateException("Invalid cheap fitness");
-        boolean candidateNear=nearSkyline(objective);
-        // The risk gate sees only earlier CHEAP results, never future READY,
-        // real simulator results, or a post-outcome learned error threshold.
-        int earned=(int)(((long)visits*quota)/maxVisits);
-        if(earned>readyCalls && (mode==Mode.PERIODIC||candidateNear)) {
-            long b=System.nanoTime();
+        double[] objective;
+        double[] cheapObjective=null;
+        if(mode==Mode.READY_CACHED) {
+            long begin=System.nanoTime();
             ReadyQueueScheduleEvaluator.Result high=queue.evaluate(key);
-            readyNanos+=System.nanoTime()-b;
+            readyNanos+=System.nanoTime()-begin;
             readyCalls++;
             objective=new double[]{high.makespan,high.cost};
-            if(!Double.isFinite(objective[0])||objective[0]<=0||
-               !Double.isFinite(objective[1])||objective[1]<=0)
-                throw new IllegalStateException("Invalid high-fidelity fitness");
-        } else if(earned>readyCalls && !candidateNear) {
-            skipped++;
+        } else {
+            long begin=System.nanoTime();
+            StageInAwareScheduleEvaluator.Result cheap=insertion.evaluate(key);
+            cheapNanos+=System.nanoTime()-begin;
+            cheapCalls++;
+            cheapObjective=new double[]{cheap.makespan,cheap.cost};
+            objective=cheapObjective.clone();
+            if(mode==Mode.PERIODIC||mode==Mode.RISK) {
+                boolean near=nearSkyline(cheapObjective);
+                int earned=(int)(((long)visits*quota)/maxVisits);
+                if(earned>readyCalls && (mode==Mode.PERIODIC||near)) {
+                    long highBegin=System.nanoTime();
+                    ReadyQueueScheduleEvaluator.Result high=queue.evaluate(key);
+                    readyNanos+=System.nanoTime()-highBegin;
+                    readyCalls++;
+                    objective=new double[]{high.makespan,high.cost};
+                } else if(earned>readyCalls && !near) {
+                    skipped++;
+                }
+                // Fixed policy consults cheap objectives only from previous
+                // distinct genotypes; high-fidelity truth never enters gate.
+                extendFront(cheapObjective);
+            }
         }
-        extendFront(new double[]{cheap.makespan,cheap.cost});
+        if(!Double.isFinite(objective[0])||objective[0]<=0||
+           !Double.isFinite(objective[1])||objective[1]<=0)
+            throw new IllegalStateException("Invalid cached evolutionary fitness");
         fixedFitness.put(key,objective.clone());
-        if(readyCalls>earned||readyCalls>quota||cheapCalls+cacheHits!=visits)
+        int earned=(int)(((long)visits*quota)/maxVisits);
+        if(readyCalls>earned||readyCalls>quota||fixedFitness.size()+cacheHits!=visits||
+           (mode==Mode.OLD_CACHED && (readyCalls!=0||cheapCalls!=fixedFitness.size()))||
+           (mode==Mode.READY_CACHED && (cheapCalls!=0||readyCalls!=fixedFitness.size())))
             throw new IllegalStateException("Inconsistent fidelity evaluation accounting");
         return objective.clone();
     }
