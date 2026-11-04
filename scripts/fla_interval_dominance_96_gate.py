@@ -137,7 +137,7 @@ def main(original,out):
         "The intervals are symmetric around the MODEL prediction: each objective interval is [p(1-epsilon),p(1+epsilon)]. A certification A≺B requires BOTH upper_A < lower_B coordinates. Safety is provable only IF the real objectives are jointly covered by the declared intervals; this fixed epsilon is not a calibrated guarantee.",
         "",
         "| Predictor | Relative bound epsilon | Joint actual-point coverage | Certified source pairs / 720 | Wrong certified / certified | Correct-class precision | True dominance recall | Average kept /16 | Mean real HV15 coverage |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|" 
     ]
     for model,eps in itertools.product(MODELS,EPSILONS):
         z=[x for x in per_group if x["predictor"]==model and x["epsilon_fraction"]==eps]
@@ -147,13 +147,6 @@ def main(original,out):
         right=cert-wrong
         actual_dom=sum(x["actual_dominance_pairs"] for x in z)
         report.append(
-            f"| {model} | {eps*100:.1f}% | "
-            f"{sum(x['joint_inside'] for x in points)}/96 | "
-            f"{cert}/720 | {wrong}/{cert} | "
-            f"{right/cert:.4f}" if False else ""
-        )
-        # Construct row separately to avoid conditional operator precedence.
-        report[-1]=(
             f"| {model} | {eps*100:.1f}% | "
             f"{sum(x['joint_inside'] for x in points)}/96 | {cert}/720 | "
             f"{wrong}/{cert} | {f'{right/cert:.4f}' if cert else 'n/a'} | "
