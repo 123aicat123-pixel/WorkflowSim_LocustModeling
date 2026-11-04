@@ -1,0 +1,57 @@
+name: FLA Staged Replay CSV Structural Diagnostic
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-staged-csv-diagnostic.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  diagnose-one-block:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Original FLA NSGA frozen CyberShake 801 OLD mode and raw CSV structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.stagedReplayContext=true \
+            -Ddagfla.stagedReplayPool=32 \
+            -Ddagfla.stagedReplayT=8 \
+            -Ddagfla.budgetReplayK=8 \
+            -Ddagfla.budgetReplayPolicy=old-greedy \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            CyberShake_50 801 30 100 reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -90 reports/experiment.log; exit 1
+            }
+          python3 - <<'PY'
+          import csv,pathlib
+          p=pathlib.Path('reports')
+          for name in ('research_summary.csv','research_replays.csv','research_staged_selection.csv'):
+            raw=(p/name).read_text()
+            with (p/name).open(newline='') as f:r=list(csv.DictReader(f))
+            print(name,'bytes=',len(raw),'lines=',len(raw.splitlines()),'rows=',len(r),
+                'header=',raw[:350].replace('\n','<NL>'),'first=',str(r[0])[:350] if r else 'NONE')
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+      - name: Archive raw original CSVs including any detected structural problems
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-staged-csv-diagnostic-${{ github.run_id }}
+          path: reports
+          retention-days: 90
