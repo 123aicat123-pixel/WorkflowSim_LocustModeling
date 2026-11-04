@@ -80,7 +80,7 @@ public final class BudgetedEvolutionFidelityObjective {
     }
     public static void clearCurrent(){CURRENT.remove();}
     public Snapshot snapshot(){
-        return new Snapshot(mode.toString().toLowerCase(),visits,cheapCalls,
+        return new Snapshot(mode.toString().toLowerCase().replace('_','-'),visits,cheapCalls,
                             readyCalls,cacheHits,fixedFitness.size(),quota,skipped,
                             cheapNanos,readyNanos);
     }
