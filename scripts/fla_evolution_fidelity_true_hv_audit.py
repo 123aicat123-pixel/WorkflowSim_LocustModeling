@@ -143,7 +143,6 @@ def audit(root,out):
        "",
        "| DAG | Solver | OLD actual HV | FULL READY actual HV | PERIODIC actual HV | RISK actual HV | PERIODIC READY calls | RISK READY calls |",
        "|---|---|---:|---:|---:|---:|---:|---:|"]
-    ]
     for dag in DAGS:
         for solver in SOLVERS:
             group={r["mode"]:r for r in all_rows if (r["workflow"],r["solver"])==(dag,solver)}
