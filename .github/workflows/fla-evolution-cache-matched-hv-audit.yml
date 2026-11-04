@@ -39,3 +39,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: error
+
+# Rerun independent fixed-source audit only after all 16 original source artifacts completed; report syntax repaired.
