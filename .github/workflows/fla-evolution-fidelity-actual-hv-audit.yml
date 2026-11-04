@@ -1,0 +1,41 @@
+name: Independent Actual FLA Evolution Fidelity 128-Replay HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-evolution-fidelity-actual-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  real-128:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve all EIGHT immutable complete true simulator source jobs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41780754595
+          github-token: ${{ github.token }}
+          pattern: fla-evolution-fidelity-*-41780754595
+          path: original
+      - name: Independently validate all original 3030-vs-K8 and fidelity calls then compute shared-reference true HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_evolution_fidelity_true_hv_audit.py
+          python3 scripts/fla_evolution_fidelity_true_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_EVOLUTION_FIDELITY_FIRST_GATE_FROZEN_2026-11-04.md reports/frozen-protocol.md
+          echo 'Original frozen actual 128 simulator records 41780754595' > reports/original-source.txt
+          cat reports/evolution_fidelity_true_hv_pilot_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve negative results, all original actual objective comparisons and call budgets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-evolution-fidelity-independent-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
