@@ -39,3 +39,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: error
+
+# Repeat read-only audit with epsilon materiality sensitivity; unchanged original source artifacts.
