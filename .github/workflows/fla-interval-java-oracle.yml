@@ -2,7 +2,7 @@ name: FLA Pure Interval Pareto Certificate Java Test
 on:
   push:
     branches: [fla-baseline]
-    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java', 'sources/org/workflowsim/planning/FailClosedFidelityGate.java', 'tests/org/workflowsim/planning/FailClosedFidelityGateTest.java', 'sources/org/workflowsim/planning/WorkflowFailClosedProbe.java', 'tests/org/workflowsim/planning/WorkflowFailClosedProbeTest.java', 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java', 'scripts/fla_fail_closed_probe_audit.py']
+    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java', 'sources/org/workflowsim/planning/FailClosedFidelityGate.java', 'tests/org/workflowsim/planning/FailClosedFidelityGateTest.java', 'sources/org/workflowsim/planning/WorkflowFailClosedProbe.java', 'tests/org/workflowsim/planning/WorkflowFailClosedProbeTest.java', 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java', 'scripts/fla_fail_closed_probe_audit.py', 'scripts/fla_fail_closed_probe_nonintrusion_audit.py']
   workflow_dispatch:
 permissions:
   contents: read
@@ -40,6 +40,18 @@ jobs:
           python3 scripts/fla_fail_closed_probe_audit.py \
             reports/probe_montage --log reports/probe-montage.log \
             --pairs 2 --ready-budget 2 --tasks 25 --k 2 --expected-evals 56
+          # Independent A/B control: same original seed, algorithm and K2 physical replays.
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.stagedReplayContext=true \
+            -Ddagfla.budgetReplayK=2 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            Montage_25 801 8 6 reports/control_montage v12-nsga-ready-pair \
+            > reports/control-montage.log 2>&1
+          python3 scripts/fla_fail_closed_probe_nonintrusion_audit.py \
+            reports/probe_montage reports/control_montage 2 \
+            | tee reports/nonintrusion-audit.log
           git rev-parse HEAD > reports/java-source-sha.txt
           printf 'K2 WorkflowSim smoke replays are diagnostic only; no calibrated uncertainty or performance improvement claim\n' > reports/scientific-scope.txt
       - name: Archive original regression evidence
