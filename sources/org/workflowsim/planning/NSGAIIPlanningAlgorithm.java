@@ -522,6 +522,7 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     /** Exactly the same opt-in alternative as FLA, OFF by default. */
     private ReadyQueueScheduleEvaluator readyQueueEvaluator;
     private DualModelScheduleObjective dualModelObjective;
+    private BudgetedEvolutionFidelityObjective evolutionaryFidelity;
     /** Number of objective evaluations (genotype decodes) performed in this run. */
     protected long evaluationCount = 0;
 
@@ -583,6 +584,8 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
         dualModelObjective="off".equals(dualMode)?null:
                 new DualModelScheduleObjective(taskOrder,vmList,
                         DualModelScheduleObjective.parseMode(dualMode));
+        evolutionaryFidelity=BudgetedEvolutionFidelityObjective.configured(
+                taskOrder,vmList,Integer.getInteger("dagfla.evolutionTotalVisits",3030));
     }
 
     
@@ -593,7 +596,9 @@ public class NSGAIIPlanningAlgorithm extends BasePlanningAlgorithm {
     protected double[] decode(int[] genotype) {
         evaluationCount++;
         double[] objectives = unifiedScheduleEvaluator.evaluate(genotype);
-        if(dualModelObjective!=null) {
+        if(evolutionaryFidelity!=null) {
+            objectives=evolutionaryFidelity.evaluate(toAssignment(genotype));
+        } else if(dualModelObjective!=null) {
             objectives=dualModelObjective.evaluate(toAssignment(genotype));
         } else if(readyQueueEvaluator!=null) {
             ReadyQueueScheduleEvaluator.Result corrected=
