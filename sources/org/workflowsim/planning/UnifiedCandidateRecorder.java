@@ -40,7 +40,12 @@ public final class UnifiedCandidateRecorder {
         private final List<Event> events;
         private final List<Event> unique;
         private final List<Event> plannedFront;
-        private Capture(List<Event> events, List<Event> unique, List<Event> front) {
+        private final List<Task> replayTasks;
+        private final List<CondorVM> replayVms;
+        private Capture(List<Event> events, List<Event> unique, List<Event> front,
+                        List<Task> tasks, List<CondorVM> vms) {
+            replayTasks=tasks==null?null:Collections.unmodifiableList(new ArrayList<>(tasks));
+            replayVms=vms==null?null:Collections.unmodifiableList(new ArrayList<>(vms));
             this.events = Collections.unmodifiableList(events);
             this.unique = Collections.unmodifiableList(unique);
             this.plannedFront = Collections.unmodifiableList(front);
@@ -48,6 +53,10 @@ public final class UnifiedCandidateRecorder {
         public int evaluationCount() { return events.size(); }
         public int distinctAssignments() { return unique.size(); }
         public int plannedNondominatedAssignments() { return plannedFront.size(); }
+        /** Research opt-in only, original planning DAG objects detached as a list.
+         * Only valid while the completed WorkflowSim planner objects remain in memory. */
+        public List<Task> replayTasks() { return replayTasks; }
+        public List<CondorVM> replayVms() { return replayVms; }
         public List<Event> events() { return events; }
         /** All unique evaluated assignments, including planning-dominated ones. */
         public List<Event> uniqueEvents() { return unique; }
@@ -69,6 +78,8 @@ public final class UnifiedCandidateRecorder {
         final List<Event> history = new ArrayList<>();
         final LinkedHashMap<Map<Integer, Integer>, Event> distinct = new LinkedHashMap<>();
         String phase = "default";
+        List<Task> replayTasks;
+        List<CondorVM> replayVms;
         Session(long budget) { this.budget = budget; }
     }
 
@@ -99,6 +110,14 @@ public final class UnifiedCandidateRecorder {
             throw new IllegalStateException("Invalid evaluated objective pair");
         if (s.history.size() >= s.budget)
             throw new IllegalStateException("Objective evaluation cap exceeded: " + s.budget);
+        if(Boolean.getBoolean("dagfla.stagedReplayContext")) {
+            if(s.replayTasks==null) {
+                s.replayTasks=new ArrayList<>(tasks);
+                s.replayVms=new ArrayList<>(vms);
+            } else if(s.replayTasks.size()!=tasks.size()||s.replayVms.size()!=vms.size()) {
+                throw new IllegalStateException("Staged replay context changed during optimizer");
+            }
+        }
         Map<Integer, Integer> mapping = new TreeMap<>();
         for (int i = 0; i < genotype.length; i++) {
             int v = genotype[i];
@@ -144,6 +163,7 @@ public final class UnifiedCandidateRecorder {
         front.sort(Comparator.comparingDouble((Event e) -> e.makespan)
                 .thenComparingDouble(e -> e.cost)
                 .thenComparingLong(e -> e.evaluation));
-        return new Capture(new ArrayList<>(s.history), unique, front);
+        return new Capture(new ArrayList<>(s.history), unique, front,
+                           s.replayTasks,s.replayVms);
     }
 }
