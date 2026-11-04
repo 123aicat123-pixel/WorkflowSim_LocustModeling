@@ -2,7 +2,7 @@ name: FLA Pure Interval Pareto Certificate Java Test
 on:
   push:
     branches: [fla-baseline]
-    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java', 'sources/org/workflowsim/planning/FailClosedFidelityGate.java', 'tests/org/workflowsim/planning/FailClosedFidelityGateTest.java', 'sources/org/workflowsim/planning/WorkflowFailClosedProbe.java', 'tests/org/workflowsim/planning/WorkflowFailClosedProbeTest.java']
+    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java', 'sources/org/workflowsim/planning/FailClosedFidelityGate.java', 'tests/org/workflowsim/planning/FailClosedFidelityGateTest.java', 'sources/org/workflowsim/planning/WorkflowFailClosedProbe.java', 'tests/org/workflowsim/planning/WorkflowFailClosedProbeTest.java', 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,8 +26,37 @@ jobs:
           java -cp 'build/classes:lib/*' org.workflowsim.planning.BudgetedEvolutionFidelityObjectiveTest | tee reports/cache-original-regression.log
           java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-original-regression.log
           test "$(grep -h -c '^PASS ' reports/*.log | awk -F: '{s+=$NF}END{print s}')" -eq 6
+          # Experimental opt-in only: 2 original solvers, K2 physical simulator replays each.
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.stagedReplayContext=true \
+            -Ddagfla.budgetReplayK=2 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Ddagfla.failClosedProbePairs=2 \
+            -Ddagfla.failClosedProbeReadyBudget=2 \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            Montage_25 801 8 6 reports/probe_montage v12-nsga-ready-pair \
+            > reports/probe-montage.log 2>&1
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+          p=Path("reports/probe_montage_fail_closed_probe.csv")
+          assert p.is_file(), "Missing post-search Task->VM probe trace"
+          with p.open(newline="") as stream:
+              rows=list(csv.DictReader(stream))
+          assert len(rows)==4, ("Expected two candidate pairs per original solver",len(rows))
+          assert len({r["algorithm"] for r in rows})==2
+          for row in rows:
+              assert row["decision"] in ("READY_ESTIMATES_AVAILABLE","KEEP_BOTH")
+              assert row["first_assignment"] != row["second_assignment"]
+              assert int(row["ready_calls"])<=2
+              assert int(row["old_calls"])<=4
+              assert row["first_assignment"] and row["second_assignment"]
+          assert sum(int(r["ready_calls"])==2 for r in rows)>=2
+          print("PASS actual-optimizer post-search probe: 2 solvers x 2 pairs, no uncertified dominance")
+          PY
           git rev-parse HEAD > reports/java-source-sha.txt
-          printf 'No simulator, algorithm change or confidence-calibration claim\n' > reports/scientific-scope.txt
+          printf 'K2 WorkflowSim smoke replays are diagnostic only; no calibrated uncertainty or performance improvement claim\n' > reports/scientific-scope.txt
       - name: Archive original regression evidence
         if: always()
         uses: actions/upload-artifact@v4
