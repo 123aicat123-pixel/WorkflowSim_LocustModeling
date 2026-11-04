@@ -39,3 +39,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: error
+
+# Full original 18/18 simulator jobs complete; rerun independent audit on the complete immutable source archive.
