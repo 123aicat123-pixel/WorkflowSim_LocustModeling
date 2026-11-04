@@ -1,0 +1,41 @@
+name: Read-only Staged Decoder Low K Screening Actual HV Study
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-staged-decoder-low-k.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  staged-screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve original six immutable 96-genotype real WorkflowSim artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41695356307
+          github-token: ${{ github.token }}
+          pattern: fla-algorithm-independent-*-41695356307
+          path: original
+      - name: Evaluate frozen planned-only OLD shortlist, selective READY, and random-T screening
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_staged_decoder_low_k_audit.py
+          python3 scripts/fla_staged_decoder_low_k_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-source-sha.txt
+          printf 'Immutable original 96 WorkflowSim points: 41695356307\n' > reports/original-run-id.txt
+          cp docs/FLA_STAGED_DECODER_LOW_K_FROZEN_PROTOCOL_2026-11-04.md reports/preregistered-protocol.md
+          cat reports/staged_decoder_low_k_true_HV_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save complete adverse and favorable decisions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-staged-decoder-low-k-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
