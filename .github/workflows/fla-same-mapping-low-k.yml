@@ -1,0 +1,41 @@
+name: Read-only Exact K1 K2 K4 K8 Selection on 96 Frozen True Simulator Plans
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-same-mapping-low-k.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  exact-low-k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the SIX immutable original WorkflowSim jobs (96 distinct placement genotypes)
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41695356307
+          github-token: ${{ github.token }}
+          pattern: fla-algorithm-independent-*-41695356307
+          path: original
+      - name: Assert frozen source and compare exact planned-only K-replay subsets against real HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_same_mapping_low_k_selection.py
+          python3 scripts/fla_same_mapping_low_k_selection.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-source-sha.txt
+          printf 'Original 96 actual simulator replay source: 41695356307\n' > reports/original-source.txt
+          cp docs/FLA_SAME_MAPPING_LOW_K_SELECTION_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+          cat reports/low_K_planned_selection_true_HV_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive every gain, negative case, simulator truth and selection provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-same-mapping-low-K-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
