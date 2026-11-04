@@ -1,0 +1,95 @@
+name: FLA NSGA Prospective K16 New-Seed Confirmation
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-evolution-k16-confirmation.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-true-k16:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [CyberShake_50, Sipht_60]
+        seed: [901, 902]
+        mode: [old-cached, ready-cached, periodic, risk]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile full original source and verify decoder/caching
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.BudgetedEvolutionFidelityObjectiveTest > reports/cache-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/old-unit.log
+      - name: Run FLA and seeded NSGA-II with exact 3030 original fitness visits and K16 true replays each
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.evolutionFidelity='${{ matrix.mode }}' \
+            -Ddagfla.evolutionK16Confirmation=true \
+            -Ddagfla.evolutionTotalVisits=3030 \
+            -Ddagfla.evolutionReadyBudget=378 \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -120 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv, math, pathlib
+          p=pathlib.Path("reports")
+          def read(name):
+              with (p/name).open(newline="") as f:
+                  return list(csv.DictReader(f))
+          summary=read("research_summary.csv")
+          replay=read("research_replays.csv")
+          trace=read("research_evolution_fidelity.csv")
+          arms={"DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]"}
+          mode="${{ matrix.mode }}"
+          assert len(summary)==len(trace)==2 and len(replay)==32
+          assert {r["algorithm"] for r in summary}==arms
+          assert {r["algorithm"] for r in trace}==arms
+          for s in summary:
+              assert s["workflow"]=="${{ matrix.workflow }}" and s["seed"]=="${{ matrix.seed }}"
+              assert tuple(int(s[z]) for z in ("population","generations","evaluations","captured_evaluations","replayed"))==(30,100,3030,3030,16)
+              rows=[r for r in replay if r["algorithm"]==s["algorithm"]]
+              assert len(rows)==16 and len({r["mapping"] for r in rows})==16
+              assert sorted(int(r["candidate_index"]) for r in rows)==list(range(1,17))
+              assert all(math.isfinite(float(r[z])) and float(r[z])>0 for r in rows for z in ("sim_makespan","sim_cost","planned_makespan","planned_cost"))
+          for t in trace:
+              assert t["mode"]==mode
+              visits,cheap,ready,hits,distinct,quota=(int(t[z]) for z in ("visits","cheap_calls","ready_calls","cache_hits","distinct","ready_budget"))
+              assert visits==3030 and distinct+hits==visits and ready<=quota and ready<=distinct
+              if mode=="old-cached":assert quota==0 and cheap==distinct and ready==0
+              elif mode=="ready-cached":assert quota==3030 and cheap==0 and ready==distinct
+              else:assert quota==378 and cheap==distinct and 0<=ready<=378
+          print("PASS original paired FLA/NSGA actual K16 source and physical decoder-call accounting")
+          PY
+          printf 'DAG=%s seed=%s mode=%s K=16 visits=3030 VM=default\n' \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' '${{ matrix.mode }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_EVOLUTION_FIDELITY_K16_NEW_SEEDS_FROZEN_2026-11-04.md reports/frozen-protocol.md
+      - name: Archive every real source outcome including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-evolution-k16-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ matrix.mode }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
