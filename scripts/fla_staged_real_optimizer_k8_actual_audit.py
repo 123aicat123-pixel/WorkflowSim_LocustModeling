@@ -16,7 +16,7 @@ MODES=("old-greedy","ready-greedy","staged-greedy")
 SOLVERS=("DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]")
 REPLAY_K=8
 POOL=32
-EXPECTED_SOURCE_RUN="41777491741"
+EXPECTED_SOURCE_RUN="41777916573"
 TOL=1e-10
 
 def read(path):
