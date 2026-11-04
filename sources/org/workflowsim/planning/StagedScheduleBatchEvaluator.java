@@ -98,6 +98,50 @@ public final class StagedScheduleBatchEvaluator {
     }
 
     /**
+     * Prospective alternative to staged-greedy. Spend T READY calls using
+     * active OLD-space acquisition, then rank ALL N physical candidates on
+     * one uniformly residual-corrected OLD scale. No mixed raw objectives.
+     * The estimates are not certified and no simulator outcomes are read.
+     */
+    public SelectionResult selectActiveUniform(List<Map<Integer,Integer>> genotypes,
+                                                int queryT,int outputK) {
+        if(genotypes==null||genotypes.isEmpty()||queryT<outputK||
+           outputK<1||queryT>genotypes.size())
+            throw new IllegalArgumentException("Invalid active batch parameters");
+        long begin=System.nanoTime();
+        double[][] scores=new double[genotypes.size()][2];
+        double maxM=0.,maxC=0.;
+        for(int i=0;i<genotypes.size();i++) {
+            StageInAwareScheduleEvaluator.Result p=old.evaluate(genotypes.get(i));
+            scores[i][0]=p.makespan;scores[i][1]=p.cost;
+            maxM=Math.max(maxM,p.makespan);
+            maxC=Math.max(maxC,p.cost);
+        }
+        long afterOld=System.nanoTime();
+        double[] reference={1.5*maxM+1e-6,1.5*maxC+1e-6};
+        final int[] used={0};
+        final long[] readyNanos={0L};
+        ActiveUniformResidualSelector.Result output=
+            ActiveUniformResidualSelector.select(scores,index->{
+                long b=System.nanoTime();
+                try {
+                    ReadyQueueScheduleEvaluator.Result r=ready.evaluate(genotypes.get(index));
+                    used[0]++;
+                    return new double[]{r.makespan,r.cost};
+                } finally {
+                    readyNanos[0]+=System.nanoTime()-b;
+                }
+            },queryT,outputK,reference);
+        long end=System.nanoTime();
+        if(used[0]!=queryT||output.readyCalls!=queryT||
+           output.queried.length!=queryT||output.selected.length!=outputK)
+            throw new IllegalStateException("Unmatched active READY query budget");
+        return new SelectionResult(output.queried,output.selected,
+            output.predictedHypervolume,genotypes,genotypes.size(),used[0],
+            afterOld-begin,readyNanos[0],end-begin);
+    }
+
+    /**
      * Evaluate all candidates once with OLD, select an OLD-HV shortlist
      * of T, evaluate READY exactly T times and pick K from mixed predictions.
      * A single cheap-only reference for both selection stages is frozen as
