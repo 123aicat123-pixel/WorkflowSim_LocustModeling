@@ -1257,7 +1257,7 @@ public final class FLAResearchExperiment {
             w.write("algorithm,pair,first_assignment,second_assignment,decision,reason,"
                     +"old_first_m,old_first_c,old_second_m,old_second_c,"
                     +"ready_first_m,ready_first_c,ready_second_m,ready_second_c,"
-                    +"old_calls,ready_calls,old_cache_hits,ready_cache_hits,ready_budget\\n");
+                    +"old_calls,ready_calls,old_cache_hits,ready_cache_hits,ready_budget\n");
             for(Run run:runs) {
                 if(run.stagedReplayTasks==null||run.stagedReplayVms==null)
                     throw new IllegalStateException("No original workflow decoder context: "+run.algorithm);
@@ -1269,7 +1269,7 @@ public final class FLAResearchExperiment {
                     Candidate a=run.allVisited.get(2*i),b=run.allVisited.get(2*i+1);
                     WorkflowFailClosedProbe.Result result=probe.assess(a.assignment,b.assignment);
                     double[] ra=result.decision.readyFirst,rb=result.decision.readySecond;
-                    String reason=result.decision.reason.replace(',',';').replace('\\n',' ');
+                    String reason=result.decision.reason.replace(',',';').replace('\n',' ');
                     w.write(String.format(Locale.ROOT,
                         "%s,%d,%s,%s,%s,%s,%.17g,%.17g,%.17g,%.17g,%s,%s,%s,%s,%d,%d,%d,%d,%d%n",
                         run.algorithm,i+1,result.firstId,result.secondId,result.decision.kind,
