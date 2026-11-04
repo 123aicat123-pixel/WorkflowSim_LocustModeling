@@ -35,14 +35,14 @@ def mapping(value):
     return result
 
 
-def audit(prefix, pairs, ready_budget, tasks, k, expected_evals):
+def audit(prefix, pairs, ready_budget, tasks, k, expected_evals, log_path):
     prefix = pathlib.Path(prefix)
     probe = rows(pathlib.Path(str(prefix) + "_fail_closed_probe.csv"))
     summary = rows(pathlib.Path(str(prefix) + "_summary.csv"))
     replays = rows(pathlib.Path(str(prefix) + "_replays.csv"))
     fingerprints = rows(pathlib.Path(str(prefix) + "_visited_fingerprints.csv"))
     protocol = pathlib.Path(str(prefix) + "_budget_protocol.txt").read_text(encoding="utf-8")
-    log = pathlib.Path(str(prefix) + ".log").read_text(encoding="utf-8")
+    log = pathlib.Path(log_path).read_text(encoding="utf-8")
     assert len(summary) == 2, ("Expected one FLA and one NSGA-II solver", len(summary))
     algorithms = [row["algorithm"] for row in summary]
     assert len(set(algorithms)) == 2
@@ -125,6 +125,7 @@ if __name__ == "__main__":
     parser.add_argument("--tasks", type=int, default=25)
     parser.add_argument("--k", type=int, default=2)
     parser.add_argument("--expected-evals", type=int, default=56)
+    parser.add_argument("--log", required=True)
     opts = parser.parse_args()
     audit(opts.prefix, opts.pairs, opts.ready_budget, opts.tasks,
-          opts.k, opts.expected_evals)
+          opts.k, opts.expected_evals, opts.log)
