@@ -1242,7 +1242,7 @@ public final class FLAResearchExperiment {
             for(Run run:runs) {
                 BudgetedEvolutionFidelityObjective.Snapshot x=run.evolutionFidelity;
                 if(x==null||x.visits!=run.evals||
-                   x.cheapCalls+x.cacheHits!=x.visits||
+                   x.distinct+x.cacheHits!=x.visits||
                    x.readyCalls>x.maxReadyCalls)
                     throw new IllegalStateException("Invalid evolutionary fidelity trace "+run.algorithm);
                 w.write(String.format(Locale.ROOT,
