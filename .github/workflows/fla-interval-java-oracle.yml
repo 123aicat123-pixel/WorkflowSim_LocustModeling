@@ -1,0 +1,35 @@
+name: FLA Pure Interval Pareto Certificate Java Test
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-interval-java-oracle.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  no-oracle-math:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile all Java sources and run conservative interval geometry oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.IntervalParetoCertificateTest | tee reports/interval-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.BudgetedEvolutionFidelityObjectiveTest | tee reports/cache-original-regression.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-original-regression.log
+          test "$(grep -h -c '^PASS ' reports/*.log | awk -F: '{s+=$NF}END{print s}')" -eq 3
+          git rev-parse HEAD > reports/java-source-sha.txt
+          printf 'No simulator, algorithm change or confidence-calibration claim\n' > reports/scientific-scope.txt
+      - name: Archive original regression evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-interval-java-oracle-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
