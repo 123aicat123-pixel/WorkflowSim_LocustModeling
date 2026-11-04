@@ -2,7 +2,7 @@ name: FLA Pure Interval Pareto Certificate Java Test
 on:
   push:
     branches: [fla-baseline]
-    paths: ['.github/workflows/fla-interval-java-oracle.yml']
+    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java']
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,9 +20,10 @@ jobs:
           find sources examples tests -type f -name '*.java' | sort > sources.txt
           javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
           java -cp 'build/classes:lib/*' org.workflowsim.planning.IntervalParetoCertificateTest | tee reports/interval-oracle.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.IntervalParetoCertificatePropertyTest | tee reports/interval-property-oracle.log
           java -cp 'build/classes:lib/*' org.workflowsim.planning.BudgetedEvolutionFidelityObjectiveTest | tee reports/cache-original-regression.log
           java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-original-regression.log
-          test "$(grep -h -c '^PASS ' reports/*.log | awk -F: '{s+=$NF}END{print s}')" -eq 3
+          test "$(grep -h -c '^PASS ' reports/*.log | awk -F: '{s+=$NF}END{print s}')" -eq 4
           git rev-parse HEAD > reports/java-source-sha.txt
           printf 'No simulator, algorithm change or confidence-calibration claim\n' > reports/scientific-scope.txt
       - name: Archive original regression evidence
