@@ -2,7 +2,7 @@ name: FLA Pure Interval Pareto Certificate Java Test
 on:
   push:
     branches: [fla-baseline]
-    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java', 'sources/org/workflowsim/planning/FailClosedFidelityGate.java', 'tests/org/workflowsim/planning/FailClosedFidelityGateTest.java', 'sources/org/workflowsim/planning/WorkflowFailClosedProbe.java', 'tests/org/workflowsim/planning/WorkflowFailClosedProbeTest.java', 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java', 'scripts/fla_fail_closed_probe_audit.py', 'scripts/fla_fail_closed_probe_nonintrusion_audit.py']
+    paths: ['.github/workflows/fla-interval-java-oracle.yml', 'tests/org/workflowsim/planning/IntervalParetoCertificatePropertyTest.java', 'sources/org/workflowsim/planning/FailClosedFidelityGate.java', 'tests/org/workflowsim/planning/FailClosedFidelityGateTest.java', 'sources/org/workflowsim/planning/WorkflowFailClosedProbe.java', 'tests/org/workflowsim/planning/WorkflowFailClosedProbeTest.java', 'examples/org/workflowsim/examples/planning/FLAResearchExperiment.java', 'scripts/fla_fail_closed_probe_audit.py', 'scripts/fla_fail_closed_probe_nonintrusion_audit.py', 'scripts/fla_fail_closed_audit_negative_controls.py']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,6 +26,9 @@ jobs:
           java -cp 'build/classes:lib/*' org.workflowsim.planning.BudgetedEvolutionFidelityObjectiveTest | tee reports/cache-original-regression.log
           java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/ready-original-regression.log
           test "$(grep -h -c '^PASS ' reports/*.log | awk -F: '{s+=$NF}END{print s}')" -eq 6
+          # Synthetic negative controls: must reject tampered reports before any real run.
+          python3 scripts/fla_fail_closed_audit_negative_controls.py \
+            | tee reports/probe-audit-negative-controls.log
           # Experimental opt-in only: 2 original solvers, K2 physical simulator replays each.
           java -Dworkflowsim.planningStageInAware=true \
             -Ddagfla.stagedReplayContext=true \
