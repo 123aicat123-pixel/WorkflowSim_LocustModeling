@@ -39,3 +39,5 @@ jobs:
           path: reports
           retention-days: 90
           if-no-files-found: error
+
+# Retry only read-only frozen audit after Python report syntax repair; original true simulator records unchanged.
