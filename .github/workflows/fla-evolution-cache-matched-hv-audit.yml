@@ -1,0 +1,41 @@
+name: Independent 256 Actual WorkflowSim Cache-Matched Fidelity HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-evolution-cache-matched-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  all-16-original:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all sixteen frozen source simulator jobs, never infer from CI pass alone
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41784901304
+          github-token: ${{ github.token }}
+          pattern: fla-cache-matched-*-41784901304
+          path: original
+      - name: Fail closed on incomplete source; audit first-write cache, true K8 HV, shared reference and measured compute
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_evolution_cache_matched_actual_hv_audit.py
+          python3 scripts/fla_evolution_cache_matched_actual_hv_audit.py original reports | tee reports/stdout.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          echo 'Original immutable 256 actual WorkflowSim source jobs: 41784901304' > reports/original-run.txt
+          cp docs/FLA_EVOLUTION_FIDELITY_CACHE_MATCHED_FROZEN_2026-11-04.md reports/frozen-protocol.md
+          cat reports/cache_equal_real_hv_full_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive original objective accounting and every positive / tied / negative result
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-cache-matched-independent-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
