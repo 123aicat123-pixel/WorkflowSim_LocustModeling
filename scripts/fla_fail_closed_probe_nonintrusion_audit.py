@@ -31,7 +31,7 @@ def audit(probed,control,k,pairs=2):
     # must NEVER satisfy the noninterference gate.
     probe=load(probed,"_fail_closed_probe.csv")
     assert len(probe)==2*pairs, ("Wrong number of real optimizer probe rows",len(probe))
-    assert set(row["algorithm"] for row in probe)==set(fa), "Missing/unknown probe solver"
+    assert set(row["algorithm"] for row in probe)=={key[0] for key in fa}, "Missing/unknown probe solver"
     for alg in fa:
         records=[row for row in probe if row["algorithm"]==alg]
         assert len(records)==pairs, (alg,"Missing probe candidate pairs")
