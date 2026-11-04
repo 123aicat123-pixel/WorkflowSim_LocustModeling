@@ -1,0 +1,44 @@
+name: FLA Staged Batch Actual Java OLD READY End-to-End Adapter Safety Gate
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-staged-batch-adapter.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-decoder-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean compile entire repository with all research and historical source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Verify high-precision decoder call cap and detached mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          for class in \
+            org.workflowsim.planning.GreedyStagedParetoSelectorTest \
+            org.workflowsim.planning.StagedScheduleBatchEvaluatorTest \
+            org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest \
+            org.workflowsim.planning.StageInAwareEvaluatorTest; do
+            java -cp 'build/classes:lib/*' "$class" | tee -a reports/staged-adapter-regression.log
+          done
+          test "$(grep -c '^PASS ' reports/staged-adapter-regression.log)" -eq 4
+          git rev-parse HEAD > reports/source-sha.txt
+          echo 'No actual CloudSim runs or source baseline modifications in this adapter safety test' > reports/scientific-scope.txt
+          cat reports/staged-adapter-regression.log >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve exact sources, regression assertions and default-isolation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-staged-adapter-unit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
