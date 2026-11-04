@@ -1238,7 +1238,7 @@ public final class FLAResearchExperiment {
         try(BufferedWriter w=Files.newBufferedWriter(
                 Paths.get(prefix+"_evolution_fidelity.csv"),StandardCharsets.UTF_8)) {
             w.write("algorithm,mode,visits,cheap_calls,ready_calls,cache_hits,distinct,"
-                  +"ready_budget,near_gate_skips,cheap_ns,ready_ns\\n");
+                  +"ready_budget,near_gate_skips,cheap_ns,ready_ns\n");
             for(Run run:runs) {
                 BudgetedEvolutionFidelityObjective.Snapshot x=run.evolutionFidelity;
                 if(x==null||x.visits!=run.evals||
