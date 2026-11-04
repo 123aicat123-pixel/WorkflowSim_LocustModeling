@@ -1,0 +1,62 @@
+name: FLA Java Greedy Staged Low-K Screening vs Immutable Exact Real-HV
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-greedy-staged-screen.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  same-physical-genotype:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all six immutable same-VM original WorkflowSim simulator outcomes
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41695356307
+          github-token: ${{ github.token }}
+          pattern: fla-algorithm-independent-*-41695356307
+          path: original
+      - name: Download immutable prior planned-exact staged model selection results
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41775295948
+          github-token: ${{ github.token }}
+          pattern: fla-staged-decoder-low-k-41775295948
+          path: archived_exact
+      - name: Clean build and unit-test actual scalable greedy selection with lazy expensive calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.GreedyStagedParetoSelectorTest | tee reports/greedy-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest | tee reports/old-ready-regression.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/old-stagein-regression.log
+      - name: Java model-only greedy screening and postselection true WorkflowSim HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -cp 'build/classes:lib/*' \
+            org.workflowsim.planning.GreedyStagedParetoSourceAudit \
+            original reports/java_greedy_24_source_cases.csv \
+            | tee reports/java-greedy-source-audit.log
+          python3 -m py_compile scripts/fla_greedy_staged_exact_audit.py
+          python3 scripts/fla_greedy_staged_exact_audit.py original archived_exact \
+            reports/java_greedy_24_source_cases.csv reports \
+            | tee reports/stdout.log
+          git rev-parse HEAD > reports/analysis-sha.txt
+          cp docs/FLA_GREEDY_STAGED_DECODER_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+          cat reports/greedy_staged_exact_comparison_report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive exact-vs-greedy adverse results and original TaskID-VM provenance
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fla-greedy-stage-actual-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
