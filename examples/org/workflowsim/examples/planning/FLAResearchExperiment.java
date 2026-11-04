@@ -327,6 +327,17 @@ public final class FLAResearchExperiment {
             runs.add(runMleao(dax, seed, pop, gens));
         }
 
+        // Freeze all paired Task/VM diagnostic evidence before ANY K replay:
+        // no simulated label for a candidate is available to this probe.
+        if(Integer.getInteger("dagfla.failClosedProbePairs",0)>0) {
+            for(Run run:runs) {
+                for(Candidate c:run.allVisited)
+                    if(c.simulated!=null)
+                        throw new IllegalStateException("Probe leaked future replay truth");
+            }
+            saveFailClosedProbe(prefix,runs);
+            System.out.println("PASS pre-replay uncalibrated fail-closed mapping probe frozen");
+        }
         for (Run run : runs) {
             if (run.evals <= 0 || run.evals > cap || run.candidates.isEmpty()) {
                 throw new IllegalStateException(run.algorithm + " invalid budget/front: " + run.evals);
@@ -434,8 +445,6 @@ public final class FLAResearchExperiment {
             saveStagedReplaySelection(prefix,runs);
         if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off")))
             saveEvolutionFidelity(prefix,runs);
-        if(Integer.getInteger("dagfla.failClosedProbePairs",0)>0)
-            saveFailClosedProbe(prefix,runs);
         if(Boolean.getBoolean("dagfla.populationDiagnostics"))
             savePopulationDiagnostics(prefix,runs,gens,pop);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
@@ -1237,7 +1246,7 @@ public final class FLAResearchExperiment {
     }
 
     /**
-     * Post-search, opt-in diagnostic of real optimizer-visited physical maps.
+     * BEFORE-replay, opt-in diagnostic of real optimizer-visited physical maps.
      * NOT evolutionary fitness, NOT a simulator outcome, NOT a calibrated gate.
      * Never changes the K replays, search trajectory or primary HV.
      * Requires -Ddagfla.stagedReplayContext=true, -Ddagfla.budgetReplayK>0
