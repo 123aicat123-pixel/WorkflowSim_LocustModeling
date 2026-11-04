@@ -99,9 +99,8 @@ def main(root,out):
             for mode in MODES:
                 own=source[dag,seed,mode,solver]
                 actual=hv(own.values(),ref)
-                assert oracle_k8+1e-10>=actual-1e-10,(
-                    "Greedy K8 oracle cannot be assumed to upper-bound every K8 selection",
-                    dag,seed,solver,mode)
+                # A greedy K8 policy is only a heuristic and can underperform
+                # a preexisting observed K8 subset; record signed deltas.
                 active=seen_by["active-uniform-greedy"]
                 overlap=len(seen_by[mode]&active)
                 table.append(dict(workflow=dag,seed=seed,solver=solver,mode=mode,
