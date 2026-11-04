@@ -132,12 +132,18 @@ public final class FLAResearchExperiment {
         if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off"))) {
-            if(BUDGET_REPLAY_K!=8 ||
+            // Explicit prospective K16 confirmation is isolated from all
+            // historical K8 data and has no effect with opt-in disabled.
+            final boolean confirmationK16 =
+                    Boolean.getBoolean("dagfla.evolutionK16Confirmation");
+            if(BUDGET_REPLAY_K!=(confirmationK16?16:8) ||
                !"pareto-cover".equals(BUDGET_REPLAY_POLICY) ||
                pop!=30||gens!=100||
                Integer.getInteger("dagfla.evolutionTotalVisits",3030)!=3030 ||
                Integer.getInteger("dagfla.evolutionReadyBudget",378)!=378)
-                throw new IllegalArgumentException("Frozen evolutionary budget: pop30 gen100 K8 quota378");
+                throw new IllegalArgumentException(
+                    "Frozen evolutionary budget: pop30 gen100 K"+
+                    (confirmationK16?16:8)+" quota378");
         }
         if (BUDGET_REPLAY_K < 0 || BUDGET_REPLAY_K > 10000)
             throw new IllegalArgumentException("invalid actual replay budget");
