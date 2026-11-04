@@ -29,6 +29,7 @@ import org.workflowsim.planning.UnifiedCandidateRecorder;
 import org.workflowsim.planning.ReplayReliabilityGate;
 import org.workflowsim.planning.StagedScheduleBatchEvaluator;
 import org.workflowsim.planning.BudgetedEvolutionFidelityObjective;
+import org.workflowsim.planning.WorkflowFailClosedProbe;
 import org.workflowsim.Task;
 import org.workflowsim.CondorVM;
 import org.workflowsim.utils.Parameters;
@@ -433,6 +434,8 @@ public final class FLAResearchExperiment {
             saveStagedReplaySelection(prefix,runs);
         if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off")))
             saveEvolutionFidelity(prefix,runs);
+        if(Integer.getInteger("dagfla.failClosedProbePairs",0)>0)
+            saveFailClosedProbe(prefix,runs);
         if(Boolean.getBoolean("dagfla.populationDiagnostics"))
             savePopulationDiagnostics(prefix,runs,gens,pop);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
@@ -1231,6 +1234,61 @@ public final class FLAResearchExperiment {
             run.algorithm,mode,pool.size(),budget,selected.oldCalls,
             selected.readyCalls,selected.totalNanos);
         return out;
+    }
+
+    /**
+     * Post-search, opt-in diagnostic of real optimizer-visited physical maps.
+     * NOT evolutionary fitness, NOT a simulator outcome, NOT a calibrated gate.
+     * Never changes the K replays, search trajectory or primary HV.
+     * Requires -Ddagfla.stagedReplayContext=true, -Ddagfla.budgetReplayK>0
+     * and -Ddagfla.failClosedProbePairs=N; records up to N disjoint pairs.
+     */
+    private static void saveFailClosedProbe(Path prefix,List<Run> runs)
+            throws IOException {
+        int pairs=Integer.getInteger("dagfla.failClosedProbePairs",0);
+        if(pairs<1||pairs>64||BUDGET_REPLAY_K<=0||
+           !Boolean.getBoolean("dagfla.stagedReplayContext"))
+            throw new IllegalArgumentException("Probe requires N in 1..64, K replay and captured Task/VM context");
+        int readyBudget=Integer.getInteger("dagfla.failClosedProbeReadyBudget",2*pairs);
+        if(readyBudget<0||readyBudget>2*pairs)
+            throw new IllegalArgumentException("Probe READY quota must be 0..2*N");
+        try(BufferedWriter w=Files.newBufferedWriter(
+                Paths.get(prefix+"_fail_closed_probe.csv"),StandardCharsets.UTF_8)) {
+            w.write("algorithm,pair,first_assignment,second_assignment,decision,reason,"
+                    +"old_first_m,old_first_c,old_second_m,old_second_c,"
+                    +"ready_first_m,ready_first_c,ready_second_m,ready_second_c,"
+                    +"old_calls,ready_calls,old_cache_hits,ready_cache_hits,ready_budget\\n");
+            for(Run run:runs) {
+                if(run.stagedReplayTasks==null||run.stagedReplayVms==null)
+                    throw new IllegalStateException("No original workflow decoder context: "+run.algorithm);
+                WorkflowFailClosedProbe probe=new WorkflowFailClosedProbe(
+                        run.stagedReplayTasks,run.stagedReplayVms,readyBudget);
+                int count=Math.min(pairs,run.allVisited.size()/2);
+                if(count<=0)throw new IllegalStateException("No distinct probe pairs: "+run.algorithm);
+                for(int i=0;i<count;i++){
+                    Candidate a=run.allVisited.get(2*i),b=run.allVisited.get(2*i+1);
+                    WorkflowFailClosedProbe.Result result=probe.assess(a.assignment,b.assignment);
+                    double[] ra=result.decision.readyFirst,rb=result.decision.readySecond;
+                    String reason=result.decision.reason.replace(',',';').replace('\\n',' ');
+                    w.write(String.format(Locale.ROOT,
+                        "%s,%d,%s,%s,%s,%s,%.17g,%.17g,%.17g,%.17g,%s,%s,%s,%s,%d,%d,%d,%d,%d%n",
+                        run.algorithm,i+1,result.firstId,result.secondId,result.decision.kind,
+                        reason,result.oldFirst[0],result.oldFirst[1],
+                        result.oldSecond[0],result.oldSecond[1],
+                        ra==null?"":String.format(Locale.ROOT,"%.17g",ra[0]),
+                        ra==null?"":String.format(Locale.ROOT,"%.17g",ra[1]),
+                        rb==null?"":String.format(Locale.ROOT,"%.17g",rb[0]),
+                        rb==null?"":String.format(Locale.ROOT,"%.17g",rb[1]),
+                        probe.oldCalls(),probe.readyCalls(),probe.oldCacheHits(),
+                        probe.readyCacheHits(),probe.readyBudget()));
+                    if(result.decision.kind==org.workflowsim.planning.FailClosedFidelityGate.Kind.CONDITIONAL_FIRST_DOMINATES ||
+                       result.decision.kind==org.workflowsim.planning.FailClosedFidelityGate.Kind.CONDITIONAL_SECOND_DOMINATES)
+                        throw new IllegalStateException("Uncalibrated probe certified a dominance");
+                }
+                if(probe.oldCalls()>2*count||probe.readyCalls()>readyBudget)
+                    throw new IllegalStateException("Diagnostic violated decoder call budgets");
+            }
+        }
     }
 
     private static void saveEvolutionFidelity(Path prefix,List<Run> runs)
