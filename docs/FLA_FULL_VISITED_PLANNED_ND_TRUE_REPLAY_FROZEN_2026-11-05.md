@@ -1,0 +1,15 @@
+# Frozen true replay of FULL source-visited planned Pareto front, 2026-11-05
+
+**Preregistered BEFORE any new full-front true simulator labels.** This is a model-fidelity/coverage diagnosis, NOT a proposed improved FLA, prospective K16 optimization, or independent unseen-family holdout.
+
+## Scientific question
+Prior passive original-source study [41985327148] shows K16 captures >0.999992 of ALL visited *PLANNED* HV across 8 cases. This does not establish true Pareto quality because only K16 maps were simulated. Test whether re-simulating ALL planning-nondominated source-visited genotypes reveals any additional true-HV headroom.
+
+## Prespecified source arms and controls
+- Identical source search: original unchanged FLA-v12 and cost-seeded NSGA-II, pop30 gen100, seed 981/982, `Montage_50` and `Sipht_60`; default VM and original FIFO simulator. Prior source run 41985327148 immutable 4 job artifacts, original each K16.
+- New opt-in `-Ddagfla.fullVisitedPlannedNdReplay=true` requires `-Ddagfla.budgetReplayK=0`, as the complete ND front has variable size across original histories. This branch selects ALL first-write source-visited strictly planned-nondominated distinct physical mapping identities BEFORE any true replay. It never reads labels to select. The exact source visited history SHA must match original 41985327148 for same DAG/seed/solver.
+- Original expected per-case ND counts from the already observed passive data: FLA Montage_50 31/45, Sipht_60 33/28; NSGA-II Montage 45/40, Sipht 65/14 (seeds 981/982). These are preexisting observed planned model counts, not fitted true results. Require counts <=80, fail closed otherwise; expected ~301 new replay rows in total, including some mappings already in original K16.
+- Recheck physical TaskID->VMID mapping and positive true makespan/cost. For duplicates between original K16 and new full ND replay, actual simulators must agree under the same VM/system regime (numeric relative tolerance 1e-7). If an original K16 candidate was planning-dominated (possible when front has <16 maps), it may be absent in the new full ND set.
+- Measure actual HV for (A) original prospective K16 selected, (B) complete source-visited planning ND. Use one shared 1.5x actual max reference across both solvers and both sets within each exact DAG/seed; 3.0x sensitivity. Distinguish A and B budgets: full-ND has 14–65 simulator replays per source optimizer, vs exactly 16 for original; B is a **more expensive diagnostic**, NOT a fair deployable selector or optimizer comparison.
+- Explicitly report unselected full-planned-ND candidates whose true simulation adds positive marginal HV to original K16, whether K16 vs full planning ND actual fronts differ, and simulator call opportunity costs. Never call true K16-optimal or global Pareto optimal, since planning-dominated visited mappings remain unobserved.
+- No retuning, holdout, 20-seed statistical significance or publication-grade superiority claim. Prior problem-family familiarity and reused seed 981/982 are explicitly recognized. Preserve adverse/tied cases; `master` unchanged.
