@@ -1,4 +1,5 @@
 name: FLA Full Visited Planned ND Actual Simulator Replay
+# Clean source run after fixing passive original history capture for K=0 mode.
 on:
   push:
     branches: [fla-baseline]
