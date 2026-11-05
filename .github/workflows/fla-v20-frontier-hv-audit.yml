@@ -1,0 +1,40 @@
+name: Independent FLA v20 Frontier Novelty 384 Real HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v20-frontier-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  immutable-real-hv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch all six original source artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41969565802
+          github-token: ${{ github.token }}
+          pattern: fla-v20-frontier-*-41969565802
+          path: original
+      - name: Fail closed on missing originals, compute true K16 HV and all paired losses
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v20_frontier_novelty_actual_hv_audit.py
+          python3 scripts/fla_v20_frontier_novelty_actual_hv_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-sha.txt
+          cp docs/FLA_V20_FRONTIER_NOVELTY_FROZEN_PROTOCOL_2026-11-04.md reports/frozen-protocol.md
+          cat reports/v20_independent_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve results, failures, and exact source provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v20-independent-true-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: error
