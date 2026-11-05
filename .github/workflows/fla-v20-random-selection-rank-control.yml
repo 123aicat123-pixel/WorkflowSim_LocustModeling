@@ -1,0 +1,88 @@
+name: FLA v20 Random K16 Rank-Bias Control
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v20-random-selection-rank-control.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-four-arm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        workflow: [CyberShake_50, Sipht_60, Epigenomics_100]
+        seed: [951, 952]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile all Java with novel and existing v12 regression oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.FrontierNoveltyProposalTest | tee reports/frontier-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest | tee reports/stagein-unit.log
+      - name: Exact original four-arm FLA-v12 random-novelty DAG-novelty seeded-NSGA K16 actual replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=random \
+            -Ddagfla.budgetReplayReplicate=0 \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v20-frontier-four-arm > reports/experiment.log 2>&1 || {
+              tail -110 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,pathlib,re
+          r=pathlib.Path('reports')
+          def load(name):
+              with (r/name).open(newline='') as f:return list(csv.DictReader(f))
+          summary=load('research_summary.csv')
+          replays=load('research_replays.csv')
+          fingerprints=load('research_visited_fingerprints.csv')
+          expected={'DAG-Pareto-FLA[v12-hvbandit]',
+                    'DAG-Pareto-FLA[v20-frontier-random]',
+                    'DAG-Pareto-FLA[v20-frontier-dag]',
+                    'NSGA-II[costseed]'}
+          assert len(summary)==4 and len(replays)==64 and len(fingerprints)==4
+          assert {x['algorithm'] for x in summary}==expected
+          assert {x['algorithm'] for x in fingerprints}==expected
+          for s in summary:
+              assert (s['workflow'],s['seed'])==('${{ matrix.workflow }}','${{ matrix.seed }}')
+              assert tuple(int(s[x]) for x in ('population','generations','evaluations','captured_evaluations','replayed'))==(30,100,3030,3030,16),s
+              selected=[x for x in replays if x['algorithm']==s['algorithm']]
+              assert len(selected)==16 and len({x['mapping'] for x in selected})==16
+              assert all(math.isfinite(float(x[z])) and float(x[z])>0 for x in selected for z in ('sim_makespan','sim_cost','planned_makespan','planned_cost'))
+          log=(r/'experiment.log').read_text(errors='replace')
+          active=re.findall(r'V20_FRONTIER_NOVELTY mode=(\d+) triggers=(\d+) moves=(\d+) validChangedProposals=(\d+)',log)
+          assert len(active)==2,active
+          assert {int(x[0]) for x in active}=={1,2}
+          assert all(int(x[1])>0 and int(x[2])>0 and int(x[3])>0 for x in active)
+          print('PASS v20 original optimizer four-arm equal-3030 target search, active novelty, K16 physical WorkflowSim replays')
+          PY
+          printf 'DAG=%s seed=%s K=16 visits=3030 VM=default\n' \
+             '${{ matrix.workflow }}' '${{ matrix.seed }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          printf 'selector=random replicate=0 K=16\n' > reports/selection-policy.txt
+          cp docs/FLA_V20_K16_RANDOM_VS_PARETO_SELECTION_BIAS_FROZEN_2026-11-05.md reports/frozen-protocol.md
+      - name: Archive all original positives and negatives
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v20-random-rank-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
