@@ -9,7 +9,7 @@ import pathlib
 import statistics
 import sys
 
-RUN="41975442523"
+RUN="41975729241"
 WORKFLOWS=("Montage_50","Inspiral_50","CyberShake_30","Epigenomics_46")
 SEEDS=(971,972)
 POLICIES=("pareto-cover","boundary-four","dominated-random-four")
