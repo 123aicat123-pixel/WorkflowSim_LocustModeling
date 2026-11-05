@@ -357,6 +357,10 @@ public final class FLAResearchExperiment {
         // replay. It never changes fitness, search state, or the K selector.
         if(Boolean.getBoolean("dagfla.exportVisitedObjectiveSpace"))
             saveFullVisitedObjectiveSpace(prefix,runs,wf,seed);
+        final boolean fullVisitedPlannedNd=
+                Boolean.getBoolean("dagfla.fullVisitedPlannedNdReplay");
+        if(fullVisitedPlannedNd && BUDGET_REPLAY_K!=0)
+            throw new IllegalArgumentException("Full planned ND diagnostic requires K=0 (variable actual replay budget)");
         for (Run run : runs) {
             if (run.evals <= 0 || run.evals > cap || run.candidates.isEmpty()) {
                 throw new IllegalStateException(run.algorithm + " invalid budget/front: " + run.evals);
@@ -386,7 +390,19 @@ public final class FLAResearchExperiment {
                             : "extreme-band3".equals(BUDGET_REPLAY_POLICY)
                                 ? budgetedExtremeBand3(run.allVisited,BUDGET_REPLAY_K)
                                 : budgetedPlannedCoverage(run.allVisited,BUDGET_REPLAY_K))
+                    : fullVisitedPlannedNd
+                    ? plannedNondominated(run.allVisited)
                     : plannedNondominated(run.candidates);
+            if(fullVisitedPlannedNd) {
+                if(front.isEmpty()||front.size()>80)
+                    throw new IllegalStateException("Frozen full planned ND count must be in 1..80");
+                for(Candidate c:front)
+                    if(c.simulated!=null)
+                        throw new IllegalStateException("Simulator label leaked into full planned ND selection");
+                System.out.printf(Locale.ROOT,
+                    "PASS FULL_VISITED_PLANNED_ND solver=%s count=%d distinctSource=%d%n",
+                    run.algorithm,front.size(),run.allVisited.size());
+            }
             run.policySelectionNanos+=System.nanoTime()-initialSelectionStartNanos;
             if (BUDGET_REPLAY_K > 0 && !feedback && front.size() != BUDGET_REPLAY_K)
                 throw new IllegalStateException("Wrong prospective simulator replay call budget");
@@ -471,8 +487,9 @@ public final class FLAResearchExperiment {
         if(Boolean.getBoolean("dagfla.populationDiagnostics"))
             savePopulationDiagnostics(prefix,runs,gens,pop);
         if (SCREENING_AUDIT_N > 0) saveScreeningAudit(wf,seed,prefix,runs);
-        if (BUDGET_REPLAY_K > 0) {
+        if (BUDGET_REPLAY_K > 0 || Boolean.getBoolean("dagfla.fullVisitedPlannedNdReplay"))
             saveVisitedFingerprints(wf,seed,prefix,runs);
+        if (BUDGET_REPLAY_K > 0) {
             if(BUDGET_REPLAY_POLICY.startsWith("online-"))
                 saveFeedbackTrace(prefix,runs);
             Path protocol = Paths.get(prefix + "_budget_protocol.txt");
