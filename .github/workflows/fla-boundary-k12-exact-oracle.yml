@@ -1,0 +1,39 @@
+name: Exact K12 Plus Four Hindsight TRUE-HV Ceiling
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-boundary-k12-exact-oracle.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  exact-hindsight-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read all 24 immutable source outcomes
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41975729241
+          github-token: ${{ github.token }}
+          pattern: fla-boundary-four-*-41975729241
+          path: original
+      - name: Enumerate exact fixed-K12 hindsight four-choice ceiling
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_boundary_k12_exact_oracle_audit.py
+          python3 scripts/fla_boundary_k12_exact_oracle_audit.py original reports | tee reports/exact-oracle.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cat reports/exact_hindsight_oracle_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all exact hindsight results and warnings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-boundary-k12-exact-hindsight-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
