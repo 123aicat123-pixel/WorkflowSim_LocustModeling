@@ -1,0 +1,47 @@
+name: Independent Full Planned ND True WorkflowSim Headroom Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-full-planned-nd-true-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-source-identity-true-hv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original four source K16 replay artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41985327148
+          github-token: ${{ github.token }}
+          pattern: fla-visited-coverage-*-41985327148
+          path: original
+      - name: Download original four variable-budget complete planned-ND replay artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41986249710
+          github-token: ${{ github.token }}
+          pattern: fla-full-planned-nd-*-41986249710
+          path: original
+      - name: Recompute actual HV, verify exhaustive planned-ND mapping and exact source history
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_full_visited_nd_true_replay_audit.py
+          python3 scripts/fla_full_visited_nd_true_replay_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_FULL_VISITED_PLANNED_ND_TRUE_REPLAY_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/all_planned_nd_true_replay_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve all favorable and adverse actual simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-complete-planned-nd-true-hv-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
