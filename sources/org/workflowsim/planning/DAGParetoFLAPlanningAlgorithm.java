@@ -682,6 +682,14 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         if(useDisagreementRelocation)
             System.out.printf("V18_DISAGREEMENT proposals=%d actualRelocations=%d%n",
                     disagreementProposals,disagreementMoves);
+        if(frontierNoveltyMode!=0) {
+            if(frontierNoveltyTriggers<=0 || frontierNoveltyCandidates<=0)
+                throw new IllegalStateException("v20 novelty proposals were not active");
+            System.out.printf(java.util.Locale.ROOT,
+                    "V20_FRONTIER_NOVELTY mode=%d triggers=%d moves=%d validChangedProposals=%d%n",
+                    frontierNoveltyMode,frontierNoveltyTriggers,frontierNoveltyMoves,
+                    frontierNoveltyCandidates);
+        }
         if(useQueueRiskRelocation)
             System.out.printf(java.util.Locale.ROOT,
                     "V19_QUEUE_RISK proposals=%d actualRelocations=%d internalForecasts=%d alternativeForecasts=%d%n",
