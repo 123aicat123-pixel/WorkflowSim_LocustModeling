@@ -1,0 +1,47 @@
+name: Independent v20 K16 Random vs Pareto Rank Bias Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v20-random-rank-hv-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  matched-history-true-rank-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve six original planned-K16 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41969565802
+          github-token: ${{ github.token }}
+          pattern: fla-v20-frontier-*-41969565802
+          path: original
+      - name: Retrieve six new random-K16 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41972072193
+          github-token: ${{ github.token }}
+          pattern: fla-v20-random-rank-*-41972072193
+          path: original
+      - name: Verify complete 12 source artifacts and identical original genotype histories
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v20_random_vs_pareto_rank_audit.py
+          python3 scripts/fla_v20_random_vs_pareto_rank_audit.py original reports | tee reports/strict-audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_V20_K16_RANDOM_VS_PARETO_SELECTION_BIAS_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/random_vs_pareto_fidelity_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain positive and negative rank outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v20-random-pareto-rank-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
