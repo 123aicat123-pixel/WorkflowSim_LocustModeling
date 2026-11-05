@@ -1,0 +1,40 @@
+name: Independent 32 Mapping K4 TRUE Decision Regret and Divergence Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-independent32-k4-actual-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  independent-32-mapping-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve all eight independent 32-mapping original true simulator source archives
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42019263313
+          github-token: ${{ github.token }}
+          pattern: fla-independent32-*-42019263313
+          path: original
+      - name: Verify immutable original source and exhaustive exact 35960 K4 oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_independent32_k4_actual_audit.py
+          python3 scripts/fla_independent32_k4_actual_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_INDEPENDENT_32_MAPPING_K4_DIVERGENCE_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/independent32_k4_decision_regret_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive all source-derived actual regrets and adverse records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-independent32-true-k4-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
