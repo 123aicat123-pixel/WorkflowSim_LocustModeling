@@ -1,4 +1,5 @@
 name: Independent 32 Mapping K4 Decision Identifiability Audit
+# Also verify every prefix K1-K4 greedy selection against frozen forecast-only scores.
 on:
   push:
     branches: [fla-baseline]
