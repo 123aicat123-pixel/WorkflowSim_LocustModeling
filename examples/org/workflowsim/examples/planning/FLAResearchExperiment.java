@@ -30,6 +30,7 @@ import org.workflowsim.planning.ReplayReliabilityGate;
 import org.workflowsim.planning.StagedScheduleBatchEvaluator;
 import org.workflowsim.planning.BudgetedEvolutionFidelityObjective;
 import org.workflowsim.planning.WorkflowFailClosedProbe;
+import org.workflowsim.planning.BoundaryFourReplaySelector;
 import org.workflowsim.Task;
 import org.workflowsim.CondorVM;
 import org.workflowsim.utils.Parameters;
@@ -126,7 +127,7 @@ public final class FLAResearchExperiment {
             if(!Boolean.getBoolean("dagfla.stagedReplayContext")||
                BUDGET_REPLAY_K!=8 || STAGED_REPLAY_POOL!=32||
                STAGED_REPLAY_T!=8 ||
-               !Arrays.asList("old-greedy","ready-greedy","staged-greedy","active-uniform-greedy").contains(BUDGET_REPLAY_POLICY))
+               !Arrays.asList("old-greedy","ready-greedy","staged-greedy","active-uniform-greedy","boundary-four","dominated-random-four").contains(BUDGET_REPLAY_POLICY))
                 throw new IllegalArgumentException("Frozen staged K8/T8/32 context/policy required");
         }
         if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy","active-uniform-greedy").contains(BUDGET_REPLAY_POLICY))
@@ -370,6 +371,10 @@ public final class FLAResearchExperiment {
                     : BUDGET_REPLAY_K > 0
                     ? (BUDGET_REPLAY_POLICY.endsWith("-greedy")
                         ? budgetedStagedReplay(run,BUDGET_REPLAY_POLICY,BUDGET_REPLAY_K)
+                        : ("boundary-four".equals(BUDGET_REPLAY_POLICY) ||
+                           "dominated-random-four".equals(BUDGET_REPLAY_POLICY))
+                        ? budgetedBoundaryFour(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm,
+                              "dominated-random-four".equals(BUDGET_REPLAY_POLICY))
                         : "random".equals(BUDGET_REPLAY_POLICY)
                         ? budgetedRandomVisited(run.allVisited,BUDGET_REPLAY_K,seed,run.algorithm)
                         : "scalar-sweep".equals(BUDGET_REPLAY_POLICY)
@@ -1373,6 +1378,43 @@ public final class FLAResearchExperiment {
                   screen,selected,r.predictedHypervolume,hex.toString()));
             }
         }
+    }
+
+    /** Fixed K12+4 dominated-candidate rescue; no real simulator labels. */
+    private static List<Candidate> budgetedBoundaryFour(List<Candidate> history,
+            int budget,long seed,String algorithm,boolean stratifiedRandom) {
+        if(budget!=16)throw new IllegalArgumentException("Frozen K16 required");
+        Map<Map<Integer,Integer>,Candidate> unique=new LinkedHashMap<>();
+        for(Candidate c:history)unique.putIfAbsent(c.assignment,c);
+        List<Candidate> all=new ArrayList<>(unique.values());
+        List<Candidate> baseline=budgetedPlannedCoverage(history,12);
+        int[] anchors=new int[12];
+        for(int i=0;i<12;i++){
+            anchors[i]=all.indexOf(baseline.get(i));
+            if(anchors[i]<0)throw new IllegalStateException("Lost baseline identity");
+        }
+        double[][] scores=new double[all.size()][];
+        String[] ids=new String[all.size()];
+        for(int i=0;i<all.size();i++) {
+            scores[i]=all.get(i).planned;
+            ids[i]=canonicalMappingKey(all.get(i));
+        }
+        long salt=seed^(((long)algorithm.hashCode())*0x9E3779B97F4A7C15L)
+                ^0x41B0F9A4D3102A67L;
+        BoundaryFourReplaySelector.Result result=
+            BoundaryFourReplaySelector.select(scores,ids,anchors,
+                stratifiedRandom?BoundaryFourReplaySelector.Policy.STRATIFIED_RANDOM
+                                :BoundaryFourReplaySelector.Policy.BOUNDARY,
+                new Random(salt));
+        List<Candidate> resultCandidates=new ArrayList<>();
+        for(int index:result.indices)resultCandidates.add(all.get(index));
+        if(!resultCandidates.subList(0,12).equals(baseline))
+            throw new IllegalStateException("K12 control no longer identical");
+        System.out.printf(Locale.ROOT,
+            "BOUNDARY_FOUR policy=%s eligible=%d strata=%s K=16%n",
+            stratifiedRandom?"dominated-random-four":"boundary-four",
+            result.dominatedEligible,Arrays.toString(result.stratumSizes));
+        return resultCandidates;
     }
 
     private static List<Candidate> budgetedPlannedCoverage(List<Candidate> history, int budget) {
