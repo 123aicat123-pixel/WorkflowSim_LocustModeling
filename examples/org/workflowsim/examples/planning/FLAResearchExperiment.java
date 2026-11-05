@@ -353,6 +353,10 @@ public final class FLAResearchExperiment {
             saveFailClosedProbe(prefix,runs);
             System.out.println("PASS pre-replay uncalibrated fail-closed mapping probe frozen");
         }
+        // Passive model-space diagnostic is frozen BEFORE the first WorkflowSim
+        // replay. It never changes fitness, search state, or the K selector.
+        if(Boolean.getBoolean("dagfla.exportVisitedObjectiveSpace"))
+            saveFullVisitedObjectiveSpace(prefix,runs,wf,seed);
         for (Run run : runs) {
             if (run.evals <= 0 || run.evals > cap || run.candidates.isEmpty()) {
                 throw new IllegalStateException(run.algorithm + " invalid budget/front: " + run.evals);
@@ -741,6 +745,40 @@ public final class FLAResearchExperiment {
         return r;
     }
 
+
+    /** Passive ordered source objective export. NEVER read actual simulator labels.
+     * All rows reproduce the first-write distinct candidate-history commitment.
+     */
+    private static void saveFullVisitedObjectiveSpace(Path prefix,List<Run> runs,
+            String workflow,long seed) throws IOException {
+        Path output=Paths.get(prefix+"_full_visited_objectives.csv");
+        try(BufferedWriter w=Files.newBufferedWriter(output,StandardCharsets.UTF_8)) {
+            w.write("workflow,algorithm,seed,visited_index,planned_makespan,planned_cost,canonical_mapping\n");
+            for(Run run:runs) {
+                if(run.allVisited.isEmpty() ||
+                   run.allVisited.size()!=run.distinctObservedAssignments)
+                    throw new IllegalStateException(
+                        "Incomplete distinct source history: "+run.algorithm);
+                Set<String> mappingIds=new HashSet<>();
+                for(int i=0;i<run.allVisited.size();i++) {
+                    Candidate c=run.allVisited.get(i);
+                    if(c.simulated!=null || c.independentPlanned!=null)
+                        throw new IllegalStateException(
+                            "Passive export attempted after simulator truth became available");
+                    valid(c.planned);
+                    String mappingId=canonicalMappingKey(c);
+                    if(!mappingIds.add(mappingId))
+                        throw new IllegalStateException("Repeated physical TaskID/VMID genotype");
+                    w.write(String.format(Locale.ROOT,
+                        "%s,%s,%d,%d,%.17g,%.17g,%s%n",
+                        workflow,run.algorithm,seed,i+1,c.planned[0],c.planned[1],mappingId));
+                }
+                System.out.printf(Locale.ROOT,
+                    "PASS PRE_REPLAY_VISITED_OBJECTIVES solver=%s rows=%d no_simulator_labels=1%n",
+                    run.algorithm,run.allVisited.size());
+            }
+        }
+    }
 
     /** Stable SHA-256 commitment to the complete ordered, DISTINCT planner-evaluated pool.
      *  Uses canonical task:VM mapping and exact double bits, not displayed rounded CSV numbers.
