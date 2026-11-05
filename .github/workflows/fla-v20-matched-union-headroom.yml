@@ -1,0 +1,46 @@
+name: Independent Matched K16 Pareto Random Union Headroom
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v20-matched-union-headroom.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  immutable-true-union:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all six original planned K16 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41969565802
+          github-token: ${{ github.token }}
+          pattern: fla-v20-frontier-*-41969565802
+          path: original
+      - name: Download all six original random K16 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41972072193
+          github-token: ${{ github.token }}
+          pattern: fla-v20-random-rank-*-41972072193
+          path: original
+      - name: Strict independent actual-label overlap and Pareto-exclusion audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v20_matched_union_hindsight_audit.py
+          python3 scripts/fla_v20_matched_union_hindsight_audit.py original reports | tee reports/strict-audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cat reports/matched_k16_union_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain evidence and all adverse observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v20-matched-union-headroom-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
