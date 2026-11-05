@@ -1,0 +1,84 @@
+name: FLA K16 Boundary Four Prospective Fair Replay
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-boundary-four-k16.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-solver-real-k16:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Montage_50, Inspiral_50, CyberShake_30, Epigenomics_46]
+        seed: [971, 972]
+        policy: [pareto-cover, boundary-four, dominated-random-four]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile all sources and verify fixed selector test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -encoding UTF-8 -nowarn -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.BoundaryFourReplaySelectorTest | tee reports/boundary-unit.log
+      - name: Original FLA-v12 and seeded NSGA paired true K16 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy='${{ matrix.policy }}' \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+              '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+              reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -120 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,pathlib
+          p=pathlib.Path("reports")
+          def rows(filename):
+              with (p/filename).open(newline="") as f:
+                  return list(csv.DictReader(f))
+          summary=rows("research_summary.csv")
+          replay=rows("research_replays.csv")
+          finger=rows("research_visited_fingerprints.csv")
+          assert len(summary)==len(finger)==2 and len(replay)==32
+          solvers={"DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]"}
+          assert {r["algorithm"] for r in summary}==solvers
+          assert {r["algorithm"] for r in finger}==solvers
+          for s in summary:
+              assert s["workflow"]=="${{ matrix.workflow }}" and s["seed"]=="${{ matrix.seed }}"
+              assert tuple(int(s[x]) for x in ("population","generations","evaluations","captured_evaluations","replayed"))==(30,100,3030,3030,16)
+              rs=[r for r in replay if r["algorithm"]==s["algorithm"]]
+              assert len(rs)==16 and len({r["mapping"] for r in rs})==16
+              assert [int(r["candidate_index"]) for r in rs]==list(range(1,17))
+              assert all(math.isfinite(float(r[k])) and float(r[k])>0 for r in rs for k in ("planned_makespan","planned_cost","sim_makespan","sim_cost"))
+          policy="${{ matrix.policy }}"
+          if policy!="pareto-cover":
+              logs=(p/"experiment.log").read_text(errors="replace")
+              assert logs.count("BOUNDARY_FOUR policy="+policy+" ")==2
+          print("PASS exact true K16 sources, original 3030 fitness visits and planning-only selection")
+          PY
+          printf 'DAG=%s seed=%s policy=%s K=16 visits=3030 VM=default\n' \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' '${{ matrix.policy }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_BOUNDARY_FOUR_K16_FROZEN_2026-11-05.md reports/frozen-protocol.md
+      - name: Archive original reports even when experiment fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-boundary-four-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ matrix.policy }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
