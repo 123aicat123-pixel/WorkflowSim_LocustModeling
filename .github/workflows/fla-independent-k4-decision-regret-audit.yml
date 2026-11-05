@@ -1,0 +1,40 @@
+name: Independent Fixed Mapping K4 TRUE Pareto Decision Regret Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-independent-k4-decision-regret-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  immutable-true-mapping-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve eight immutable original 16-genotype WorkflowSim sources
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42002749849
+          github-token: ${{ github.token }}
+          pattern: fla-independent-k4-*-42002749849
+          path: original
+      - name: Fail closed on original identity and compute exact 1820 K4 oracle per block
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_fixed_universe_k4_actual_regret_audit.py
+          python3 scripts/fla_fixed_universe_k4_actual_regret_audit.py original reports | tee reports/strict-audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_FIXED_UNIVERSE_K4_DECISION_CONSEQUENCE_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/fixed_mapping_k4_decision_regret_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive whole source read-only decision consequence and all negatives
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-independent-k4-true-regret-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
