@@ -1,4 +1,5 @@
 name: FLA K16 Boundary Four Prospective Fair Replay
+# Corrected run after initial K16 selector allowlist rejection; original failed run retained.
 on:
   push:
     branches: [fla-baseline]
