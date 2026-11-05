@@ -1,0 +1,75 @@
+name: FLA Independent Fixed Mapping K4 Pareto Decision Truth
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-independent-k4-decision-truth.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-fixed-mapping-truth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 95
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        workflow: [Inspiral_100, Sipht_100, Epigenomics_24, CyberShake_100]
+        vm_profile: [default, staggered]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile ALL original Java source with both planners
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -encoding UTF-8 -nowarn -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/planner-regression.log
+      - name: Exact physical sixteen-mapping non-optimizer WorkflowSim truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.readyQueueDiagnostic=true \
+            -Ddagfla.fixedTaskTrace=true \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile='${{ matrix.vm_profile }}' \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAAlgorithmIndependentMappingUniverse \
+            '${{ matrix.workflow }}' reports/same_mapping_true_replays.csv \
+            > reports/source.log 2>&1 || { tail -120 reports/source.log; exit 1; }
+          python3 - <<'PY'
+          import csv,math,pathlib
+          p=pathlib.Path("reports")
+          with (p/"same_mapping_true_replays.csv").open(newline="") as f:
+              rows=list(csv.DictReader(f))
+          assert len(rows)==16 and len({r["mapping_policy"] for r in rows})==16
+          assert len({r["task_vm_mapping"] for r in rows})==16
+          assert all(r["workflow"]=="${{ matrix.workflow }}" and
+                     r["vm_profile"]=="${{ matrix.vm_profile }}" and
+                     r["seed"]=="1501" for r in rows)
+          for r in rows:
+              n=int(r["task_count"])
+              mapping=dict(tuple(map(int,x.split(":"))) for x in r["task_vm_mapping"].split("|"))
+              assert len(mapping)==n and set(mapping)==set(range(1,n+1))
+              assert all(0<=vm<16 for vm in mapping.values())
+              for key in ("old_planned_makespan","old_planned_cost",
+                          "ready_planned_makespan","ready_planned_cost","actual_makespan","actual_cost"):
+                  assert math.isfinite(float(r[key])) and float(r[key])>0
+          log=(p/"source.log").read_text(errors="replace")
+          assert log.count("FROZEN_MAP_UNIVERSE_PASS")==16 and "PASS sixteen disjoint" in log
+          print("PASS full same-physical-genotype 16 source truth replays")
+          PY
+          printf 'DAG=%s vm_speed=%s seed=1501 actual_priority=fifo mappings=16 selection=none\n' \
+            '${{ matrix.workflow }}' '${{ matrix.vm_profile }}' > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_FIXED_UNIVERSE_K4_DECISION_CONSEQUENCE_FROZEN_2026-11-05.md reports/frozen-protocol.md
+      - name: Preserve original source logs and truth labels on failure as well
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-independent-k4-${{ matrix.workflow }}-${{ matrix.vm_profile }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
