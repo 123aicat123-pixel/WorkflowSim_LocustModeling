@@ -1,0 +1,40 @@
+name: Independent v21 Dominated Near Uniform TRUE HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v21-dominated-near-uniform-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-verified:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download eight immutable source diagnostic artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41990207133
+          github-token: ${{ github.token }}
+          pattern: fla-v21-dominated-*-41990207133
+          path: original
+      - name: Validate original 16 histories and independent actual near/uniform marginal HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v21_dominated_near_uniform_actual_audit.py
+          python3 scripts/fla_v21_dominated_near_uniform_actual_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_V21_DOMINATED_NEAR_UNIFORM_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/v21_dominated_true_fidelity_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain all positive and negative raw analyses
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v21-dominated-independent-hv-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
