@@ -1,0 +1,39 @@
+name: Independent 32 Mapping K4 Decision Identifiability Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-independent32-k4-identifiability-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  frozen-cohort-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exact immutable original-source independently audited outputs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42019608367
+          github-token: ${{ github.token }}
+          pattern: fla-independent32-true-k4-audit-42019608367
+          path: original
+      - name: Exact K1 K2 K3 K4 true-hypervolume identifiability proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_independent32_k4_identifiability_audit.py
+          python3 scripts/fla_independent32_k4_identifiability_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cat reports/decision_identifiability_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve positive and negative diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-independent32-identifiability-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
