@@ -1,0 +1,86 @@
+name: FLA Full Visited Planned ND Actual Simulator Replay
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-full-visited-planned-nd-true-replay.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-planned-nd-true-replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        workflow: [Montage_50, Sipht_60]
+        seed: [981, 982]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile full original source and basic model test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/planner-unit.log
+      - name: Replay every FIRST-WRITE source-visited planned nondominated physical assignment
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.exportVisitedObjectiveSpace=true \
+            -Ddagfla.fullVisitedPlannedNdReplay=true \
+            -Ddagfla.budgetReplayK=0 \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -120 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,pathlib,math,re
+          p=pathlib.Path("reports")
+          def read(file):
+              with (p/file).open(newline="") as f:
+                  return list(csv.DictReader(f))
+          summary=read("research_summary.csv")
+          replay=read("research_replays.csv")
+          visits=read("research_full_visited_objectives.csv")
+          fp=read("research_visited_fingerprints.csv")
+          assert len(summary)==len(fp)==2
+          assert {r["algorithm"] for r in summary}=={
+             "DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]"}
+          for r in summary:
+              assert r["workflow"]=="${{ matrix.workflow }}" and r["seed"]=="${{ matrix.seed }}"
+              assert int(r["evaluations"])==int(r["captured_evaluations"])==3030
+              k=int(r["replayed"])
+              assert 1<=k<=80
+              selected=[z for z in replay if z["algorithm"]==r["algorithm"]]
+              observed=[z for z in visits if z["algorithm"]==r["algorithm"]]
+              assert len(selected)==k and len({z["mapping"] for z in selected})==k
+              assert len(observed)==int(r["distinct_observed"])
+              assert all(math.isfinite(float(z[n])) and float(z[n])>0
+                         for z in selected for n in ("planned_makespan","planned_cost",
+                                                     "sim_makespan","sim_cost"))
+          log=(p/"experiment.log").read_text(errors="replace")
+          assert log.count("PASS FULL_VISITED_PLANNED_ND solver=")==2
+          assert log.count("PASS PRE_REPLAY_VISITED_OBJECTIVES solver=")==2
+          print("PASS original 3030 planning evaluations, source-visited planned front K(variable), true outcomes")
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_FULL_VISITED_PLANNED_ND_TRUE_REPLAY_FROZEN_2026-11-05.md reports/frozen-protocol.md
+      - name: Archive source outcomes including errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-full-planned-nd-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
