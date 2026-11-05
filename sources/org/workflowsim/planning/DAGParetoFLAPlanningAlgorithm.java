@@ -86,6 +86,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     public static boolean CONFIG_DISAGREEMENT_RELOCATION = false;
     /** v19: bounded VM-ready contention Pareto-risk relocation; experimental OFF by default. */
     public static boolean CONFIG_QUEUE_RISK_RELOCATION = false;
+    /** v20 experimental diversity: 0=off, 1=random proposal, 2=DAG edge proposal. */
+    public static int CONFIG_FRONTIER_NOVELTY_MODE = 0;
 
     public static volatile LastRunMetrics lastRun = null;
 
@@ -119,6 +121,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         public int queueRiskMoves;
         public int queueRiskInternalForecasts;
         public int queueRiskForecastedAlternatives;
+        public int frontierNoveltyTriggers,frontierNoveltyMoves,frontierNoveltyCandidates;
         public int criticalProxySamples;
         public double criticalProxyPearson;
         public double criticalProxyMedianAbsolutePctError;
@@ -192,6 +195,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
     private int disagreementMoves;
     private int disagreementProposals;
     private boolean useQueueRiskRelocation;
+    private final int frontierNoveltyMode;
+    private int frontierNoveltyTriggers,frontierNoveltyMoves,frontierNoveltyCandidates;
     private ReadyQueueScheduleEvaluator queueRiskPredictor;
     private int queueRiskProposals,queueRiskMoves,queueRiskInternalForecasts,queueRiskForecastedAlternatives;
     private int[] dagEdgeParent, dagEdgeChild;
@@ -244,6 +249,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         collectPopulationDiagnostics=CONFIG_POPULATION_DIAGNOSTICS;
         useDisagreementRelocation=CONFIG_DISAGREEMENT_RELOCATION;
         useQueueRiskRelocation=CONFIG_QUEUE_RISK_RELOCATION;
+        frontierNoveltyMode=CONFIG_FRONTIER_NOVELTY_MODE;
+        if(frontierNoveltyMode<0||frontierNoveltyMode>2)
+            throw new IllegalArgumentException("Unsupported v20 novelty mode");
         if(useDisagreementRelocation&&useQueueRiskRelocation)
             throw new IllegalArgumentException("v18 and v19 proposal modes are exclusive");
         if(paretoGatedLocalSurvivor && pairedLocalSearchMode==0)
@@ -289,7 +297,8 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         if(useQueueRiskRelocation)
             queueRiskPredictor=new ReadyQueueScheduleEvaluator(taskOrder,vmList);
         if (criticalRelocationMode != 0 || usePhaseOperatorBandit) prepareCriticalProxy();
-        if (edgeRelocationMode != 0 || usePhaseOperatorBandit) prepareDagEdgeRelocation();
+        if (edgeRelocationMode != 0 || usePhaseOperatorBandit || frontierNoveltyMode==2)
+            prepareDagEdgeRelocation();
         if (!useDag) { Arrays.fill(importance, 1.0); }
         random = seed == null ? new Random() : new Random(seed);
         group1Size = (populationSize + 1) / 2;
@@ -302,6 +311,7 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         joinRelocationAttempts=0; joinRelocationChanges=0;
         queueRiskProposals=0; queueRiskMoves=0;
         queueRiskInternalForecasts=0; queueRiskForecastedAlternatives=0;
+        frontierNoveltyTriggers=0;frontierNoveltyMoves=0;frontierNoveltyCandidates=0;
         localTrials=0;localChanged=0;localDominates=0;localDominated=0;localIncomparable=0;localGateRejected=0;alpha1 = 0.85;
         for(int phase=0;phase<3;phase++) {
             Arrays.fill(banditUses[phase],0);
@@ -484,6 +494,24 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
                     queueRiskForecastedAlternatives+=proposal.candidateCount;
                     if(proposal.moved)queueRiskMoves++;
                 }
+                if(frontierNoveltyMode!=0 && random.nextDouble()<0.35) {
+                    frontierNoveltyTriggers++;
+                    int[][] populationGenes=new int[parents.size()][];
+                    for(int z=0;z<parents.size();z++)populationGenes[z]=parents.get(z).genes;
+                    double[] vmCosts=new double[vmList.size()];
+                    for(int z=0;z<vmList.size();z++)vmCosts[z]=vmList.get(z).getCost();
+                    FrontierNoveltyProposal.Result novelty=FrontierNoveltyProposal.propose(
+                        genes,allowed,populationGenes,dagEdgeParent==null?new int[0]:dagEdgeParent,
+                        dagEdgeChild==null?new int[0]:dagEdgeChild,vmCosts,
+                        isG1,frontierNoveltyMode==1
+                            ?FrontierNoveltyProposal.Source.RANDOM
+                            :FrontierNoveltyProposal.Source.DAG_EDGE,random);
+                    frontierNoveltyCandidates+=novelty.proposalsChanged;
+                    if(!Arrays.equals(genes,novelty.genes)) {
+                        System.arraycopy(novelty.genes,0,genes,0,n);
+                        frontierNoveltyMoves++;
+                    }
+                }
                 if (useNoveltyRepair) repairNoveltyBeforeEvaluation(genes,generationVisited);
                 // Passive fidelity audit: proxy uses NO target fitness calls;
                 // compare to the ONE normal stage-in-aware evaluated result.
@@ -609,6 +637,9 @@ public final class DAGParetoFLAPlanningAlgorithm extends BasePlanningAlgorithm {
         m.queueRiskMoves=queueRiskMoves;
         m.queueRiskInternalForecasts=queueRiskInternalForecasts;
         m.queueRiskForecastedAlternatives=queueRiskForecastedAlternatives;
+        m.frontierNoveltyTriggers=frontierNoveltyTriggers;
+        m.frontierNoveltyMoves=frontierNoveltyMoves;
+        m.frontierNoveltyCandidates=frontierNoveltyCandidates;
         if(useQueueRiskRelocation && queueRiskProposals==0)
             throw new IllegalStateException("v19 active but no queue-risk proposals");
         if(useDisagreementRelocation && disagreementProposals==0)
