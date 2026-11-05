@@ -1,0 +1,40 @@
+name: Independent Boundary Four K16 Real HV Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-boundary-four-k16-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-verified:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve original K16 source jobs exactly
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41975442523
+          github-token: ${{ github.token }}
+          pattern: fla-boundary-four-*-41975442523
+          path: original
+      - name: Require all 24 source artifacts and independently compute actual shared-reference HV
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_boundary_four_k16_actual_audit.py
+          python3 scripts/fla_boundary_four_k16_actual_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_BOUNDARY_FOUR_K16_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/boundary_four_actual_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain all wins, ties, losses and source trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-boundary-four-k16-independent-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
