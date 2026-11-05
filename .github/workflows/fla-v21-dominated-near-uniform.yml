@@ -1,0 +1,90 @@
+name: FLA v21 Dominated Near vs Uniform TRUE Replay Diagnostic
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v21-dominated-near-uniform.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-search-true-replays:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        workflow: [Montage_50, Sipht_60, Epigenomics_46, CyberShake_30]
+        seed: [991, 992]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile original source and verified decoder regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/stagein-unit.log
+      - name: Original FLA-v12 and NSGA-II K16 plus independent strictly planned-dominated extra8 near extra8 uniform
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective=false \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.exportVisitedObjectiveSpace=true \
+            -Ddagfla.budgetReplayK=16 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Ddagfla.screeningAuditPerAlgorithm=16 \
+            -Ddagfla.allowSeparateKPlusScreeningDiagnostic=true \
+            -Ddagfla.screeningAuditIncludeTies=false \
+            -Ddagfla.screeningAuditAllVisited=false \
+            -Dliwsa.vmSpeedProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 reports/research \
+            v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -130 reports/experiment.log
+              exit 1
+            }
+          python3 - <<'PY'
+          import csv,math,pathlib,collections
+          p=pathlib.Path("reports")
+          def read(file):
+              with (p/file).open(newline="") as f:return list(csv.DictReader(f))
+          ss=read("research_summary.csv")
+          rr=read("research_replays.csv")
+          ff=read("research_visited_fingerprints.csv")
+          vv=read("research_full_visited_objectives.csv")
+          aa=read("research_screening_samples.csv")
+          diag=read("research_screening_summary.csv")
+          expect={"DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]"}
+          assert len(ss)==len(ff)==len(diag)==2
+          assert {s["algorithm"] for s in ss}==expect
+          assert len(rr)==32 and len(aa)==32
+          for s in ss:
+              solver=s["algorithm"]
+              assert (s["workflow"],s["seed"])==('${{ matrix.workflow }}','${{ matrix.seed }}')
+              assert tuple(int(s[z]) for z in ("population","generations","evaluations","captured_evaluations","replayed"))==(30,100,3030,3030,16)
+              r=[x for x in rr if x["algorithm"]==solver]
+              a=[x for x in aa if x["algorithm"]==solver]
+              v=[x for x in vv if x["algorithm"]==solver]
+              assert len(r)==len(a)==16
+              assert len(v)==int(s["distinct_observed"])
+              assert len({x["mapping"] for x in r+a})==32
+              assert collections.Counter(x["stratum"] for x in a)=={"near-planned-front":8,"uniform-remainder":8}
+              assert int(next(x for x in diag if x["algorithm"]==solver)["strict_planned_dominated"])>=16
+              assert all(math.isfinite(float(z[k])) and float(z[k])>0 for z in r+a for k in ("planned_makespan","planned_cost","sim_makespan","sim_cost"))
+          print("PASS true 2x(16 baseline+8 near+8 uniform) separate replay without planner-label leakage")
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+          cp docs/FLA_V21_DOMINATED_NEAR_UNIFORM_FROZEN_2026-11-05.md reports/frozen-protocol.md
+      - name: Archive source and adverse outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v21-dominated-${{ matrix.workflow }}-s${{ matrix.seed }}-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
