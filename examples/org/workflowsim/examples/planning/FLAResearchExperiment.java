@@ -969,7 +969,9 @@ public final class FLAResearchExperiment {
     }
 
     private static void appendAuditHistory(Run run,UnifiedCandidateRecorder.Capture cap) {
-        if (SCREENING_AUDIT_N == 0 && BUDGET_REPLAY_K == 0) return;
+        if (SCREENING_AUDIT_N == 0 && BUDGET_REPLAY_K == 0 &&
+            !Boolean.getBoolean("dagfla.fullVisitedPlannedNdReplay") &&
+            !Boolean.getBoolean("dagfla.exportVisitedObjectiveSpace")) return;
         for (UnifiedCandidateRecorder.Event e : cap.uniqueEvents()) {
             run.allVisited.add(new Candidate(new double[]{e.makespan,e.cost},e.assignment));
         }
