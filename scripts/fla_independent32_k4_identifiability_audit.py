@@ -44,6 +44,24 @@ def hv(points,ref):
 def dominates(a,b):
     return a[0]<=b[0] and a[1]<=b[1] and (a[0]<b[0] or a[1]<b[1])
 
+def planned_greedy(points,names,k=4):
+    # Match the original independent forecast-only scorer and its immutable
+    # predicted HV reference, normalized scalar and lexicographic tie break.
+    ref=(1.5*max(x[0] for x in points)+1e-6,
+         1.5*max(x[1] for x in points)+1e-6)
+    maxes=(max(x[0] for x in points),max(x[1] for x in points))
+    selected=[]
+    for _ in range(k):
+        prior=hv([points[j] for j in selected],ref)
+        ranked=[]
+        for j in range(len(points)):
+            if j in selected:continue
+            delta=hv([points[q] for q in selected]+[points[j]],ref)-prior
+            scalar=points[j][0]/maxes[0]+points[j][1]/maxes[1]
+            ranked.append((-delta,scalar,names[j],j))
+        selected.append(min(ranked)[3])
+    return [names[j] for j in selected]
+
 def audit(root,out):
     out.mkdir(parents=True,exist_ok=True)
     source=root/"fla-independent32-true-k4-audit-42019608367"
@@ -97,7 +115,23 @@ def audit(root,out):
             selected[predictor]=labels
         assert bool(set(selected["old"])!=set(selected["ready"]))==bool(
             int(block["old"]["old_ready_K4_set_differs"]))
+        policies=[r["policy"] for r in case]
+        forecast_orders={}
+        for predictor in ("old","ready"):
+            pred=[(float(r[predictor+"_pred_m"]),float(r[predictor+"_pred_cost"]))
+                  for r in case]
+            forecast_orders[predictor]=planned_greedy(pred,policies)
+            assert forecast_orders[predictor]==selected[predictor],(
+                "Forecast-only greedy decision changed",dag,profile,predictor)
+        prefix_differences={
+            k:int(set(forecast_orders["old"][:k])!=set(forecast_orders["ready"][:k]))
+            for k in (1,2,3,4)}
         data.append(dict(workflow=dag,vm_profile=profile,
+            old_ready_k1_set_differs=prefix_differences[1],
+            old_ready_k2_set_differs=prefix_differences[2],
+            old_ready_k3_set_differs=prefix_differences[3],
+            old_ready_k4_prefix_set_differs=prefix_differences[4],
+            old_ready_full_K4_order_differs=int(forecast_orders["old"]!=forecast_orders["ready"]),
             actual_true_pareto_policies=len(nd),
             selected_old_true_nd_members=sum(x in nd for x in selected["old"]),
             old_ready_k4_set_differs=int(set(selected["old"])!=set(selected["ready"])),
@@ -141,6 +175,11 @@ def audit(root,out):
            f"- More than one true-HV-optimal K4 subset exists in **{tied}/8** cases.",
            f"- OLD and READY select different physical K4 sets in "
            f"**{sum(r['old_ready_k4_set_differs'] for r in data)}/8** cases.",
+           f"- OLD/READY physical prefix-set disagreements at K=1,2,3,4: "
+           + ", ".join(str(sum(r[f'old_ready_k{k}_set_differs'] for r in data))+"/8"
+                       for k in (1,2,3,4))+".",
+           f"- OLD/READY entire ordered greedy K4 sequences disagree in "
+           f"**{sum(r['old_ready_full_K4_order_differs'] for r in data)}/8** cases.",
            "",
            "The result diagnoses a partially *under-informative evaluation universe*: ",
            "in some blocks K4 can cover the entire finite actual nondominated front.",
