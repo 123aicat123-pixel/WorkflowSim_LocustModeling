@@ -1,0 +1,40 @@
+name: Independent Full Visited Objective Coverage Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-full-visited-coverage-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source-sha-checked:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch four original opt-in passive export and K16 true replay archives
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41985327148
+          github-token: ${{ github.token }}
+          pattern: fla-visited-coverage-*-41985327148
+          path: original
+      - name: Fail closed on incomplete source or candidate history mismatches
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_visited_objective_coverage_audit.py
+          python3 scripts/fla_visited_objective_coverage_audit.py original reports | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_VISITED_OBJECTIVE_COVERAGE_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/full_visited_coverage_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive source-derived objective-space diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-full-visited-objective-coverage-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
