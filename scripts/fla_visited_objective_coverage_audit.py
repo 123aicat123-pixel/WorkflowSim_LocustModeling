@@ -15,7 +15,7 @@ import sys
 DAGS=("Montage_50","Sipht_60")
 SEEDS=(981,982)
 SOLVERS=("DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]")
-RUN="41982439831"
+RUN="41985327148"
 
 def rows(path):
     with path.open(newline="",encoding="utf-8") as f:
