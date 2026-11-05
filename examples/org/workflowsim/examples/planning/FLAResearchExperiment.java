@@ -130,7 +130,7 @@ public final class FLAResearchExperiment {
                !Arrays.asList("old-greedy","ready-greedy","staged-greedy","active-uniform-greedy","boundary-four","dominated-random-four").contains(BUDGET_REPLAY_POLICY))
                 throw new IllegalArgumentException("Frozen staged K8/T8/32 context/policy required");
         }
-        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy","active-uniform-greedy").contains(BUDGET_REPLAY_POLICY))
+        if (BUDGET_REPLAY_K > 0 && !Arrays.asList("pareto-cover","random","scalar-sweep","extreme-band3","online-nearest-hv","online-observed-hv","online-planned-hv","online-reliability-gated","old-greedy","ready-greedy","staged-greedy","active-uniform-greedy","boundary-four","dominated-random-four").contains(BUDGET_REPLAY_POLICY))
             throw new IllegalArgumentException("invalid prospective replay policy: "+BUDGET_REPLAY_POLICY);
         if(!"off".equals(System.getProperty("dagfla.evolutionFidelity","off"))) {
             // Explicit prospective K16 confirmation is isolated from all
