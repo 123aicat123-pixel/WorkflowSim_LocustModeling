@@ -1,0 +1,41 @@
+name: FLA v21 Frozen DAG Structural Risk Offline K8 Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-v21-structural-risk-offline.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-source-structural-risk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all eight immutable original v21 simulator archives
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41990207133
+          github-token: ${{ github.token }}
+          pattern: fla-v21-dominated-*-41990207133
+          path: original
+      - name: Verify original search and parse DAG dependencies before frozen risk scoring
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_v21_structural_risk_offline_audit.py
+          python3 scripts/fla_v21_structural_risk_offline_audit.py \
+            original config/dax reports | tee reports/complete_audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_V21_STRUCTURAL_RISK_OFFLINE_K8_FROZEN_2026-11-05.md reports/frozen-protocol.md
+          cat reports/structural_risk_offline_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve signed original evidence, non-positive results and oracle controls
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-v21-structural-risk-offline-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
