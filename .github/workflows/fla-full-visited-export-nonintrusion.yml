@@ -1,0 +1,72 @@
+name: FLA Full Visited Export ON OFF Nonintrusion
+on:
+  push:
+    branches: [fla-baseline]
+    paths: ['.github/workflows/fla-full-visited-export-nonintrusion.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  paired-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile full sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @sources.txt
+      - name: Identical source optimizer with export ON and OFF
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mode in true false; do
+            java -Dworkflowsim.planningStageInAware=true \
+              -Ddagfla.useReadyQueueObjective=false \
+              -Ddagfla.dualModelMode=off \
+              -Ddagfla.exportVisitedObjectiveSpace="$mode" \
+              -Ddagfla.budgetReplayK=2 \
+              -Ddagfla.budgetReplayPolicy=pareto-cover \
+              -Dliwsa.vmSpeedProfile=default \
+              -cp 'build/classes:lib/*' \
+              org.workflowsim.examples.planning.FLAResearchExperiment \
+              Montage_25 983 8 9 "reports/export_${mode}" v12-nsga-ready-pair \
+              > "reports/export_${mode}.log" 2>&1 || {
+                tail -120 "reports/export_${mode}.log"
+                exit 1
+              }
+          done
+          python3 - <<'PY'
+          import csv,pathlib,math
+          base=pathlib.Path("reports")
+          def read(prefix,suffix):
+              with (base/(prefix+suffix)).open(newline="") as f:
+                  return list(csv.DictReader(f))
+          a,b="export_true","export_false"
+          assert (base/(a+"_full_visited_objectives.csv")).is_file()
+          assert not (base/(b+"_full_visited_objectives.csv")).exists()
+          assert read(a,"_visited_fingerprints.csv")==read(b,"_visited_fingerprints.csv"),"Source optimizer history modified"
+          aa=read(a,"_summary.csv");bb=read(b,"_summary.csv")
+          assert len(aa)==len(bb)==2
+          ignored={"search_ms","selection_ms","replay_ms","search_selection_replay_ms"}
+          for x,y in zip(aa,bb):
+              for k in x:
+                  if k in ignored:continue
+                  if k in ("planned_hv","sim_hv"):
+                      assert math.isclose(float(x[k]),float(y[k]),rel_tol=1e-10,abs_tol=1e-10),(k,x[k],y[k])
+                  else:assert x[k]==y[k],(k,x[k],y[k])
+          assert read(a,"_replays.csv")==read(b,"_replays.csv"),"Physical K2 simulation changed"
+          print("PASS identical search-history SHA, exact K2 physical maps, actual objectives and HV with exporter ON/OFF")
+          PY
+          git rev-parse HEAD > reports/source-sha.txt
+      - name: Archive paired nonintrusion smoke
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-visited-export-onoff-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
