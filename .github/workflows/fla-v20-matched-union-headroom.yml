@@ -35,7 +35,7 @@ jobs:
           python3 -m py_compile scripts/fla_v20_matched_union_hindsight_audit.py
           python3 scripts/fla_v20_matched_union_hindsight_audit.py original reports | tee reports/strict-audit.log
           git rev-parse HEAD > reports/audit-source-sha.txt
-          cat reports/matched_k16_union_findings.md >> "$GITHUB_STEP_SUMMARY"
+          cat reports/hindsight_union_findings.md >> "$GITHUB_STEP_SUMMARY"
       - name: Retain evidence and all adverse observations
         if: always()
         uses: actions/upload-artifact@v4
