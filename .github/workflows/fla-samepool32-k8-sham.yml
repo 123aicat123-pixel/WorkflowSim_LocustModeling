@@ -1,0 +1,91 @@
+name: FLA SamePool32 K2 K4 K8 Blinded Sham
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-samepool32-k8-sham.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-real-mapping-source:
+    name: Fixed 32 Original WorkflowSim ${{ matrix.workflow }} / ${{ matrix.speed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Inspiral_50, Epigenomics_46, Sipht_60]
+        speed: [default, staggered]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile original Java source and independent test checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > reports/source-list.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/source-list.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-unit.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/old-unit.log
+      - name: Original 32 fixed and same-mapping OLD READY forecasts versus true FIFO simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.readyQueueDiagnostic=true \
+            -Ddagfla.fixedTaskTrace=true \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAFixedMappingUniverse32 \
+            '${{ matrix.workflow }}' reports/same_mapping_true_replays.csv \
+            > reports/source.log 2>&1 || { tail -120 reports/source.log; exit 1; }
+          test "$(($(wc -l < reports/same_mapping_true_replays.csv) - 1))" -eq 32
+          test "$(grep -c 'FROZEN_MAP_UNIVERSE_PASS' reports/source.log)" -eq 32
+          git rev-parse HEAD > reports/source-sha.txt
+          git hash-object docs/FLA_SAMEPOOL32_K8_RANDOM_SHAM_FROZEN_2026-11-06.md > reports/protocol-sha.txt
+          printf 'workflow=%s\nvm_speed=%s\nvm_price=default\nseed=1501\n' \
+            '${{ matrix.workflow }}' '${{ matrix.speed }}' > reports/block-id.txt
+      - name: Preserve every original true simulator outcome including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: samepool32-${{ matrix.workflow }}-${{ matrix.speed }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
+  exact-blind-pool-audit:
+    needs: original-real-mapping-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original six physical simulator source archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: samepool32-*
+          path: original
+      - name: Check exhaustive exact oracle parity and freeze all same-pool decisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_samepool32_k8_random_sham_audit.py
+          python3 scripts/fla_samepool32_k8_random_sham_audit.py \
+            original reports "$GITHUB_SHA" \
+            "$(git hash-object docs/FLA_SAMEPOOL32_K8_RANDOM_SHAM_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_SAMEPOOL32_K8_RANDOM_SHAM_FROZEN_2026-11-06.md reports/frozen-protocol.md
+          cat reports/samepool32_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive exact outcomes, all sham draws and adverse results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: samepool32-complete-exact-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
