@@ -126,6 +126,22 @@ def audit(root,out):
         prefix_differences={
             k:int(set(forecast_orders["old"][:k])!=set(forecast_orders["ready"][:k]))
             for k in (1,2,3,4)}
+        # Each observed prefix is evaluated solely against independently computed
+        # true-label hindsight oracle at the SAME K. These are retrospective
+        # diagnostic regrets, never used to choose forecasts or mappings.
+        prefix_regret={}
+        prefix_actual_hv={}
+        for predictor in ("old","ready"):
+            for k in (1,2,3,4):
+                chosen=forecast_orders[predictor][:k]
+                value=hv([actual[x] for x in chosen],reference)
+                regret=maxima[k]-value
+                assert regret>=-TOL,(dag,profile,predictor,k,regret)
+                prefix_actual_hv[predictor,k]=value
+                prefix_regret[predictor,k]=max(0.,regret)
+        assert math.isclose(prefix_regret["old",4],
+                            maxima[4]-hv([actual[x] for x in selected["old"]],reference),
+                            rel_tol=0,abs_tol=TOL)
         data.append(dict(workflow=dag,vm_profile=profile,
             old_ready_k1_set_differs=prefix_differences[1],
             old_ready_k2_set_differs=prefix_differences[2],
@@ -145,11 +161,18 @@ def audit(root,out):
             equivalent_best_k4_combinations=optimal_count[4],
             total_four_subsets=math.comb(32,4),
             fraction_optimal_four_subsets=optimal_count[4]/math.comb(32,4),
-            old_regret=maxima[4]-hv([actual[x] for x in selected["old"]],reference),
-            ready_regret=maxima[4]-hv([actual[x] for x in selected["ready"]],reference),
+            **{f"{model}_k{k}_true_hv":prefix_actual_hv[model,k]
+               for model in ("old","ready") for k in (1,2,3,4)},
+            **{f"{model}_k{k}_true_regret":prefix_regret[model,k]
+               for model in ("old","ready") for k in (1,2,3,4)},
+            old_regret=prefix_regret["old",4],
+            ready_regret=prefix_regret["ready",4],
             original_source_sha=next(iter(shas))))
     assert len(data)==8
     save(out/"all_8_fixed32_decision_identifiability.csv",data)
+    assert all(r["old_ready_k4_set_differs"] == 0 for r in data)
+    assert all(r["old_k4_true_regret"] <= TOL and
+               r["ready_k4_true_regret"] <= TOL for r in data)
     lines=[
       "# Original 32-genotype K4 experiment: decision identifiability",
       "",
@@ -180,6 +203,22 @@ def audit(root,out):
                        for k in (1,2,3,4))+".",
            f"- OLD/READY entire ordered greedy K4 sequences disagree in "
            f"**{sum(r['old_ready_full_K4_order_differs'] for r in data)}/8** cases.",
+           "",
+           "| K | OLD/READY physical prefix disagreements (of 8) | "
+           "OLD mean true regret | READY mean true regret | "
+           "Blocks where both regrets are zero |",
+           "|---:|---:|---:|---:|---:|",
+           *[
+             f"| {k} | {sum(r[f'old_ready_k{k}_set_differs'] for r in data)}/8 | "
+             f"{sum(r[f'old_k{k}_true_regret'] for r in data)/8:.9f} | "
+             f"{sum(r[f'ready_k{k}_true_regret'] for r in data)/8:.9f} | "
+             f"{sum(r[f'old_k{k}_true_regret']<=TOL and r[f'ready_k{k}_true_regret']<=TOL for r in data)}/8 |"
+             for k in (1,2,3,4)
+           ],
+           "",
+           "These K-specific regrets use the same 32 existing physical true labels and",
+           "an exact hindsight oracle of size K. No new trials or algorithm improvement",
+           "are implied by additional retrospective outcome columns.",
            "",
            "The result diagnoses a partially *under-informative evaluation universe*: ",
            "in some blocks K4 can cover the entire finite actual nondominated front.",
