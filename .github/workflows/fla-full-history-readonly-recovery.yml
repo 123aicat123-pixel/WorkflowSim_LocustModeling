@@ -1,0 +1,60 @@
+name: FLA Full Visited-History Original Source Readonly Parity
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-full-history-readonly-recovery.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  immutable-real-search-histories:
+    name: Strict 16 original histories and 64-sample fingerprint exactness
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact 16 ORIGINAL source-only visit history artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42197512311
+          github-token: ${{ github.token }}
+          pattern: history-*
+          path: histories
+      - name: Download previously frozen OLD-source original 64 physical mapping inputs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42195625222
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original/old
+      - name: Download previously frozen READY-source original 64 physical mapping inputs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42196301442
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original/ready
+      - name: Verify full unique search-history SHA and frozen sample64 parity read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_full_history_visitedpool64_identity_audit.py
+          python3 scripts/fla_full_history_visitedpool64_identity_audit.py \
+            histories original reports '83b792ebf2a743d7be63f8f55c698c51c12efe76' \
+            "$(git hash-object docs/FLA_VISITEDPOOL64_FULL_HISTORY_FINGERPRINT_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-only-code-sha.txt
+          cp docs/FLA_VISITEDPOOL64_FULL_HISTORY_FINGERPRINT_FROZEN_2026-11-06.md reports/protocol.md
+          printf 'original source history run=42197512311\nsource SHA=83b792ebf2a743d7be63f8f55c698c51c12efe76\n' > reports/source-provenance.txt
+          cat reports/full_history_fingerprint_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain all source failures and outcomes without touching original history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-history-readonly-recovery-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
