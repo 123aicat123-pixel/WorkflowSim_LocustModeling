@@ -1,0 +1,120 @@
+name: FLA Full Unique Visit History Fingerprint Reproduction
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-visited-full-history-fingerprint.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-full-search-only:
+    name: Actual 3030-visit FLA ${{ matrix.source }} / ${{ matrix.workflow }} / ${{ matrix.speed }} / s${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        source: [old, ready]
+        workflow: [Montage_50, Montage_100]
+        speed: [default, staggered]
+        seed: [1701, 1702]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean compile complete original Java simulator source, no replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > reports/source-list.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/source-list.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-regression.log
+      - name: Reproduce full FLA visited genotype fingerprints without original physical simulator calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.source }}' in
+            old) ready=false; mode=v12-visited-pool64 ;;
+            ready) ready=true; mode=v12-ready-visited-pool64 ;;
+            *) exit 1 ;;
+          esac
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.stagedReplayContext=true \
+            -Ddagfla.visitedPool64=true \
+            -Ddagfla.visitedPool64HistoryOnly=true \
+            -Ddagfla.useReadyQueueObjective="$ready" \
+            -Ddagfla.evolutionFidelity=off \
+            -Ddagfla.dualModelMode=off \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research "$mode" > reports/experiment.log 2>&1 || {
+              tail -150 reports/experiment.log; exit 1
+            }
+          test "$(($(wc -l < reports/research_pool64_original_sample_hashes.csv) - 1))" -eq 64
+          test "$(grep -c HISTORY_ONLY_PASS reports/experiment.log)" -eq 1
+          test ! -f reports/research_pool64_true_replays.csv
+          git rev-parse HEAD > reports/source-sha.txt
+          git hash-object docs/FLA_VISITEDPOOL64_FULL_HISTORY_FINGERPRINT_FROZEN_2026-11-06.md > reports/protocol-sha.txt
+          printf 'source=%s\nworkflow=%s\nspeed=%s\nseed=%s\n' \
+            '${{ matrix.source }}' '${{ matrix.workflow }}' '${{ matrix.speed }}' \
+            '${{ matrix.seed }}' > reports/block-id.txt
+      - name: Archive complete visited search history without real simulator labels
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-${{ matrix.source }}-${{ matrix.workflow }}-${{ matrix.speed }}-s${{ matrix.seed }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
+  independent-history-identity-parity:
+    name: Strict parity of FULL histories with both original 64-physical frozen samples
+    needs: original-full-search-only
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all 16 completed original full-search-only history snapshots
+        uses: actions/download-artifact@v4
+        with:
+          pattern: history-*
+          path: histories
+      - name: Download frozen OLD physical-original 64-map samples
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42195625222
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original/old
+      - name: Download frozen READY physical-original 64-map samples
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42196301442
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original/ready
+      - name: Compare all source history and sampled identities against prior immutable physical inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_full_history_visitedpool64_identity_audit.py
+          python3 scripts/fla_full_history_visitedpool64_identity_audit.py \
+            histories original reports "$GITHUB_SHA" \
+            "$(git hash-object docs/FLA_VISITEDPOOL64_FULL_HISTORY_FINGERPRINT_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_VISITEDPOOL64_FULL_HISTORY_FINGERPRINT_FROZEN_2026-11-06.md reports/protocol.md
+          cat reports/full_history_fingerprint_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain successful and failed unique visit-history evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-visited-history-parity-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
