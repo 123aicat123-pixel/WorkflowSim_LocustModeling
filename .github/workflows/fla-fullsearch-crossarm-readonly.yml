@@ -1,0 +1,46 @@
+name: FLA Full-Search Cross-Arm Readonly K8 Identifiability
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-fullsearch-crossarm-readonly.yml'
+      - 'scripts/fla_montage_fullsearch_crossarm_identifiability_audit.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  strict-original-source-reanalysis:
+    name: Existing physical K8 overlap and exact selected-union oracle
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch immutable 16 original source job artifacts, not previous audit outputs
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42190857445
+          github-token: ${{ github.token }}
+          pattern: fullsearch-Montage*
+          path: original
+      - name: Independent source identity and exact selected-union hindsight gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_montage_fullsearch_crossarm_identifiability_audit.py
+          python3 scripts/fla_montage_fullsearch_crossarm_identifiability_audit.py \
+            original reports \
+            "$(git hash-object docs/FLA_MONTAGE_FULL_SEARCH_READY_TRANSFER_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis-code-sha.txt
+          cp docs/FLA_MONTAGE_FULLSEARCH_CROSSARM_IDENTIFIABILITY_PROTOCOL_2026-11-06.md reports/readonly-protocol.md
+          cat reports/crossarm_identifiability_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve informative and unfavorable retrospective evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-fullsearch-crossarm-readonly-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
