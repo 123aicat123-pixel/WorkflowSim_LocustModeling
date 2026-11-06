@@ -16,6 +16,9 @@ from fla_independent32_k4_identifiability_audit import hv, dominates, planned_gr
 from fla_montage32_transfer_audit import POLICIES, SOURCE_COLUMNS, write
 
 DAGS=("Inspiral_50","Epigenomics_46","Sipht_60")
+# Actual XML <job> counts, independently verified against frozen DAX source.
+# DAX filename suffixes are labels, not an authoritative count.
+DAX_COUNTS={"Inspiral_50":50,"Epigenomics_46":47,"Sipht_60":58}
 SPEEDS=("default","staggered")
 KS=(2,4,8)
 N_SHAM=64
@@ -103,7 +106,7 @@ def audit(root,out,source_sha,protocol_hash):
         assert len(records)==32
         assert {r["mapping_policy"] for r in records}==set(POLICIES)
         assert len({r["task_vm_mapping"] for r in records})==32
-        expected_n=int(case[0].split("_")[1])
+        expected_n=DAX_COUNTS[case[0]]
         for r in records:
             assert (r["workflow"],r["vm_profile"],r["seed"])==(case[0],case[1],"1501")
             assert int(r["task_count"])==expected_n
