@@ -3,7 +3,9 @@ name: Independent 32 Mapping K4 Decision Identifiability Audit
 on:
   push:
     branches: [fla-baseline]
-    paths: ['.github/workflows/fla-independent32-k4-identifiability-audit.yml']
+    paths:
+      - '.github/workflows/fla-independent32-k4-identifiability-audit.yml'
+      - 'scripts/fla_independent32_k4_identifiability_audit.py'
   workflow_dispatch:
 permissions:
   contents: read
