@@ -1,0 +1,46 @@
+name: FLA READY Source Pool64 Strict Readonly Audit Correction
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-ready-source-pool64-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit-actual-original-ready-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve eight immutable real READY-fitness source artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42196301442
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original
+      - name: Strict original READY source audit with correctly typed source label
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_ready_source_visitedpool64_audit.py
+          python3 scripts/fla_ready_source_visitedpool64_audit.py \
+            original reports '1209a4ba790ba4d9e81a15bd9edaef1a05688b49' \
+            "$(git hash-object docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md reports/protocol.md
+          printf 'original run=42196301442\noriginal source SHA=1209a4ba790ba4d9e81a15bd9edaef1a05688b49\n' > reports/original-run.txt
+          grep -q 'Genuine READY FLA-visited' reports/visitedpool64_findings.md
+          cat reports/visitedpool64_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve exact source-labeled results and adverse cases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ready-source-pool64-corrected-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
