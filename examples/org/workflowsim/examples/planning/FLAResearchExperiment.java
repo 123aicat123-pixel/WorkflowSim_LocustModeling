@@ -230,6 +230,15 @@ public final class FLAResearchExperiment {
                 runs.add(original);
                 runs.add(experimental);
                 runs.add(nsga);
+            } else if ("v12-visited-pool64".equals(args[5])) {
+                // Read-only after one genuine OLD-fitness FLA-v12 search; no solver replacement.
+                if(pop!=30||gens!=100 || BUDGET_REPLAY_K!=0 ||
+                   !"false".equals(System.getProperty("dagfla.useReadyQueueObjective","false")) ||
+                   !Boolean.getBoolean("dagfla.stagedReplayContext") ||
+                   !"off".equals(System.getProperty("dagfla.evolutionFidelity","off")) ||
+                   !"off".equals(System.getProperty("dagfla.dualModelMode","off")))
+                    throw new IllegalArgumentException("Frozen OLD-only visited-pool64 requires pop30/gen100, staged context, no K replay, no READY objective or mixed fidelity");
+                runs.add(runDag(dax,seed,pop,gens,"v12-hvbandit"));
             } else if ("v12-nsga-ready-pair".equals(args[5])) {
                 // Research-only 2-arm parity: the same budget, deterministic
                 // cost seeds, and active decoder selected by JVM property.
@@ -340,6 +349,24 @@ public final class FLAResearchExperiment {
             if (Boolean.getBoolean("dagfla.includeCostSeededNsga"))
                 runs.add(runNsga(dax, seed, pop, gens, true));
             runs.add(runMleao(dax, seed, pop, gens));
+        }
+
+        if(args.length==6 && "v12-visited-pool64".equals(args[5])) {
+            if(runs.size()!=1||runs.get(0).evals!=3030 ||
+               runs.get(0).capturedEvaluations!=3030 ||
+               runs.get(0).allVisited.size()<64)
+                throw new IllegalStateException("Incomplete original FLA 3030-visit source pool");
+            Run only=runs.get(0);
+            if(only.stagedReplayTasks==null||only.stagedReplayVms==null)
+                throw new IllegalStateException("Missing source optimizer DAG/VM context");
+            List<Map<Integer,Integer>> visited=new ArrayList<>();
+            for(Candidate x:only.allVisited) {
+                if(x.simulated!=null)throw new IllegalStateException("Future real label leaked into candidate sampling");
+                visited.add(x.assignment);
+            }
+            FLAVisitedPool64Experiment.run(wf,seed,prefix,visited,
+                    only.stagedReplayTasks,only.stagedReplayVms,only.evals,only.searchMs);
+            return;
         }
 
         // Freeze all paired Task/VM diagnostic evidence before ANY K replay:
