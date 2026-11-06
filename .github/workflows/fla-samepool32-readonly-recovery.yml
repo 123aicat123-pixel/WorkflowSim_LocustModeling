@@ -1,0 +1,60 @@
+name: FLA SamePool32 Original Source Readonly Audit Recovery
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-samepool32-readonly-recovery.yml'
+      - 'scripts/fla_samepool32_k8_random_sham_audit.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  strict-readonly-recovery:
+    name: Six source archives, actual XML job counts, exact K2 K4 K8 and shams
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve immutable actual simulator source from original six-source run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42193261523
+          github-token: ${{ github.token }}
+          pattern: samepool32-*-*
+          path: original
+      - name: Verify actual DAX XML task counts and source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          expected={'Inspiral_50':50,'Epigenomics_46':47,'Sipht_60':58}
+          for dag,num in expected.items():
+              root=ET.parse('config/dax/'+dag+'.xml').getroot()
+              actual=sum(x.tag.rsplit('}',1)[-1]=='job' for x in root.iter())
+              assert actual==num,(dag,actual,num)
+          print("PASS actual source DAX counts 50/47/58")
+          PY
+      - name: Recompute all exact original same-pool K budgets, no new real trials
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_samepool32_k8_random_sham_audit.py
+          python3 scripts/fla_samepool32_k8_random_sham_audit.py original reports \
+            '658e20dfa7e63700c7336e912bdf79d534ccf299' \
+            "$(git hash-object docs/FLA_SAMEPOOL32_K8_RANDOM_SHAM_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/analysis-code-sha.txt
+          cp docs/FLA_SAMEPOOL32_K8_RANDOM_SHAM_FROZEN_2026-11-06.md reports/frozen-protocol.md
+          printf 'original source workflow=42193261523\noriginal source commit=658e20dfa7e63700c7336e912bdf79d534ccf299\n' > reports/original-source-provenance.txt
+          cat reports/samepool32_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain all original positive, negative and sham results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: samepool32-readonly-recovery-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
