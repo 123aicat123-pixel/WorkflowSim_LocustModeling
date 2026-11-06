@@ -240,6 +240,17 @@ public final class FLAResearchExperiment {
                    !"off".equals(System.getProperty("dagfla.dualModelMode","off")))
                     throw new IllegalArgumentException("Frozen OLD-only visited-pool64 requires pop30/gen100, staged context, no K replay, no READY objective or mixed fidelity");
                 runs.add(runDag(dax,seed,pop,gens,"v12-hvbandit"));
+            } else if ("v12-ready-visited-pool64".equals(args[5])) {
+                // Same sidecar and deterministic mapping sample as OLD source,
+                // but genuinely READY-guided FLA-v12 candidate evolution.
+                if(pop!=30||gens!=100 || BUDGET_REPLAY_K!=0 ||
+                   !"true".equals(System.getProperty("dagfla.useReadyQueueObjective","false")) ||
+                   !Boolean.getBoolean("dagfla.stagedReplayContext") ||
+                   !Boolean.getBoolean("dagfla.visitedPool64") ||
+                   !"off".equals(System.getProperty("dagfla.evolutionFidelity","off")) ||
+                   !"off".equals(System.getProperty("dagfla.dualModelMode","off")))
+                    throw new IllegalArgumentException("Frozen READY-source pool64 requires pop30/gen100, staged capture, true READY fitness, no mixed fidelity");
+                runs.add(runDag(dax,seed,pop,gens,"v12-hvbandit"));
             } else if ("v12-nsga-ready-pair".equals(args[5])) {
                 // Research-only 2-arm parity: the same budget, deterministic
                 // cost seeds, and active decoder selected by JVM property.
@@ -352,7 +363,8 @@ public final class FLAResearchExperiment {
             runs.add(runMleao(dax, seed, pop, gens));
         }
 
-        if(args.length==6 && "v12-visited-pool64".equals(args[5])) {
+        if(args.length==6 && ("v12-visited-pool64".equals(args[5]) ||
+            "v12-ready-visited-pool64".equals(args[5]))) {
             if(runs.size()!=1||runs.get(0).evals!=3030 ||
                runs.get(0).capturedEvaluations!=3030 ||
                runs.get(0).allVisited.size()<64)
