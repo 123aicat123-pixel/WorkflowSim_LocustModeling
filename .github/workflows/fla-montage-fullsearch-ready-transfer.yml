@@ -1,0 +1,123 @@
+name: FLA Montage Full-Search READY Transfer (Frozen)
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-montage-fullsearch-ready-transfer.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  original-search-and-true-replay:
+    name: Full search ${{ matrix.workflow }} / ${{ matrix.vm_speed }} / seed ${{ matrix.seed }} / ${{ matrix.decoder }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        workflow: [Montage_50, Montage_100]
+        vm_speed: [default, staggered]
+        seed: [1601, 1602]
+        decoder: [old, ready]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean compile and independent ready/old oracle unit checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > reports/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/stagein-test.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-test.log
+      - name: Real matched 3030-visit FLA and NSGA search and 16 FIFO physical simulator replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          case '${{ matrix.decoder }}' in
+            old) ready=false ;;
+            ready) ready=true ;;
+            *) exit 1 ;;
+          esac
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.useReadyQueueObjective="$ready" \
+            -Ddagfla.evolutionFidelity=off \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Ddagfla.budgetReplayK=8 \
+            -Ddagfla.budgetReplayPolicy=pareto-cover \
+            -Dliwsa.vmSpeedProfile='${{ matrix.vm_speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-nsga-ready-pair > reports/experiment.log 2>&1 || {
+              tail -120 reports/experiment.log; exit 1
+            }
+          python3 - <<'PY'
+          import csv, pathlib, math
+          root=pathlib.Path("reports")
+          def read(name):
+              with (root/name).open(newline="") as f:return list(csv.DictReader(f))
+          ss=read("research_summary.csv")
+          rr=read("research_replays.csv")
+          assert len(ss)==2 and len(rr)==16
+          labels={"DAG-Pareto-FLA[v12-hvbandit]","NSGA-II[costseed]"}
+          assert {r["algorithm"] for r in ss}==labels
+          for s in ss:
+              assert (s["workflow"],s["seed"])==('${{ matrix.workflow }}','${{ matrix.seed }}')
+              assert tuple(int(s[c]) for c in ("population","generations",
+                    "evaluations","captured_evaluations","replayed"))==(30,100,3030,3030,8),s
+              rows=[r for r in rr if r["algorithm"]==s["algorithm"]]
+              assert len(rows)==8 and len({r["mapping"] for r in rows})==8
+              assert all(math.isfinite(float(r[c])) and float(r[c])>0
+                  for r in rows for c in ("sim_makespan","sim_cost"))
+          print("PASS source full search exact 3030 visits × two solvers, 16 unique physical replays")
+          PY
+          printf 'workflow=%s\nvm_speed=%s\nseed=%s\ndecoder=%s\nvm_price=default\nreplay_k=8\n' \
+            '${{ matrix.workflow }}' '${{ matrix.vm_speed }}' '${{ matrix.seed }}' '${{ matrix.decoder }}' \
+            > reports/block-id.txt
+          git rev-parse HEAD > reports/source-sha.txt
+          git hash-object docs/FLA_MONTAGE_FULL_SEARCH_READY_TRANSFER_FROZEN_2026-11-06.md > reports/protocol-sha.txt
+      - name: Keep ALL real positive and negative source results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullsearch-${{ matrix.workflow }}-${{ matrix.vm_speed }}-s${{ matrix.seed }}-${{ matrix.decoder }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
+  independent-paired-hv-audit:
+    name: Blind actual HV for 8 matched four-arm search blocks
+    needs: original-search-and-true-replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve EXACT same-run 16 real source archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fullsearch-*
+          path: source-artifacts
+      - name: Strict immutable-source audit and shared four-arm true-HV reconstruction
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_montage_fullsearch_ready_transfer_audit.py
+          python3 scripts/fla_montage_fullsearch_ready_transfer_audit.py \
+            source-artifacts reports "$GITHUB_SHA" \
+            "$(git hash-object docs/FLA_MONTAGE_FULL_SEARCH_READY_TRANSFER_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_MONTAGE_FULL_SEARCH_READY_TRANSFER_FROZEN_2026-11-06.md reports/frozen-protocol.md
+          cat reports/fullsearch_actual_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive actual paired HV, adverse cases, source budgets
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullsearch-paired-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
