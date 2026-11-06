@@ -1,0 +1,93 @@
+name: FLA Montage32 Frozen Synthetic Price Sensitivity
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-montage32-price-sensitivity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  real-simulator-replays:
+    name: Physical replay ${{ matrix.workflow }} / ${{ matrix.vm_speed }} / ${{ matrix.vm_price }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Montage_50, Montage_100]
+        vm_speed: [default, staggered]
+        vm_price: [linear, convex]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile original simulator and assert synthetic pricing formulas
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > reports/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/sources.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.examples.planning.VMPriceProfilesRegressionTest > reports/price-regression.log
+          grep -q 'PASS default, linear and convex' reports/price-regression.log
+      - name: Execute independent same-physical-map original WorkflowSim 32 replays
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.readyQueueDiagnostic=true \
+            -Ddagfla.fixedTaskTrace=true \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile='${{ matrix.vm_speed }}' \
+            -Dliwsa.vmPriceProfile='${{ matrix.vm_price }}' \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAFixedMappingUniverse32 \
+            '${{ matrix.workflow }}' reports/same_mapping_true_replays.csv \
+            > reports/source.log 2>&1 || { tail -120 reports/source.log; exit 1; }
+          test "$(($(wc -l < reports/same_mapping_true_replays.csv) - 1))" -eq 32
+          test "$(grep -c 'FROZEN_MAP_UNIVERSE_PASS' reports/source.log)" -eq 32
+          git rev-parse HEAD > reports/source-sha.txt
+          git hash-object docs/FLA_MONTAGE32_PRICE_SENSITIVITY_FROZEN_2026-11-06.md > reports/protocol-sha.txt
+          printf 'workflow=%s\nvm_speed=%s\nvm_price=%s\nseed=1501\npolicies=32\n' \
+            '${{ matrix.workflow }}' '${{ matrix.vm_speed }}' '${{ matrix.vm_price }}' > reports/block-id.txt
+      - name: Preserve all original outcomes and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-price32-${{ matrix.workflow }}-${{ matrix.vm_speed }}-${{ matrix.vm_price }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
+  independent-actual-oracle:
+    name: Eight-block exhaustive K1-K4 actual regret audit
+    needs: real-simulator-replays
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all eight original physical replay archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fla-price32-*
+          path: source-artifacts
+      - name: Check exact provenance and K1-K4 all-true hindsight oracles
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_montage32_price_sensitivity_audit.py
+          python3 scripts/fla_montage32_price_sensitivity_audit.py \
+            source-artifacts reports "$GITHUB_SHA" \
+            "$(git hash-object docs/FLA_MONTAGE32_PRICE_SENSITIVITY_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-source-sha.txt
+          cp docs/FLA_MONTAGE32_PRICE_SENSITIVITY_FROZEN_2026-11-06.md reports/frozen-protocol.md
+          cat reports/price_sensitivity_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain zero, adverse and positive source-verified results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-price32-complete-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
