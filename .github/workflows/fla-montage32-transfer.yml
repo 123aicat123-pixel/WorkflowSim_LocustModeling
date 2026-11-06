@@ -1,0 +1,87 @@
+name: FLA Montage32 Prospective Same-Mapping Transfer Audit
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-montage32-transfer.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  original-physical-simulator-replays:
+    name: Real WorkflowSim ${{ matrix.workflow }} / ${{ matrix.vm_profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Montage_50, Montage_100]
+        vm_profile: [default, staggered]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile complete original Java sources and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports
+          find sources examples tests -type f -name '*.java' | sort > reports/sources.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/sources.txt
+      - name: Run thirty-two frozen identical physical mappings and original actual FIFO WorkflowSim
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.readyQueueDiagnostic=true \
+            -Ddagfla.fixedTaskTrace=true \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile='${{ matrix.vm_profile }}' \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAFixedMappingUniverse32 \
+            '${{ matrix.workflow }}' reports/same_mapping_true_replays.csv \
+            > reports/source.log 2>&1 || { tail -120 reports/source.log; exit 1; }
+          test "$(($(wc -l < reports/same_mapping_true_replays.csv) - 1))" -eq 32
+          test "$(grep -c 'FROZEN_MAP_UNIVERSE_PASS' reports/source.log)" -eq 32
+          git rev-parse HEAD > reports/source-sha.txt
+          git hash-object docs/FLA_MONTAGE32_TRANSFER_PROTOCOL_FROZEN_2026-11-06.md > reports/protocol-sha.txt
+          printf 'workflow=%s vm_profile=%s seed=1501 policies=32 actor=fixed-independent priority=fifo\n' \
+             '${{ matrix.workflow }}' '${{ matrix.vm_profile }}' > reports/block-id.txt
+      - name: Preserve original true replay data and logs even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-montage32-${{ matrix.workflow }}-${{ matrix.vm_profile }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
+  strict-independent-selection-audit:
+    name: Exact K1-K4 real HV and selection-regret audit
+    needs: original-physical-simulator-replays
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact four same-run original source archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fla-montage32-*
+          path: source-artifacts
+      - name: Independently verify four blocks and exact blind hindsight oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_montage32_transfer_audit.py
+          python3 scripts/fla_montage32_transfer_audit.py source-artifacts reports "$GITHUB_SHA" | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_MONTAGE32_TRANSFER_PROTOCOL_FROZEN_2026-11-06.md reports/frozen-protocol.md
+          cat reports/montage32_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive both adverse and favorable real outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fla-montage32-transfer-audit-${{ github.run_id }}
+          path: reports/
+          retention-days: 90
+          if-no-files-found: warn
