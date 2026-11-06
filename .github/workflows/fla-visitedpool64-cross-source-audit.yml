@@ -1,0 +1,54 @@
+name: FLA VisitedPool64 Cross-Source Four-Arm Actual HV
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-visitedpool64-cross-source-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  independent-four-arm-common-ref:
+    name: Eight matched OLD/READY-source physical K8 selection contrasts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original 512 OLD-fitness FLA sourced physical truth records
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42195625222
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original/old
+      - name: Download original 512 READY-fitness FLA sourced physical truth records
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 42196301442
+          github-token: ${{ github.token }}
+          pattern: visitedpool64-Montage*
+          path: original/ready
+      - name: Independently verify physical source and jointly normalize four arms
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_visitedpool64_cross_source_factorial_audit.py
+          python3 scripts/fla_visitedpool64_cross_source_factorial_audit.py \
+            original reports \
+            "$(git hash-object docs/FLA_VISITEDPOOL64_DUAL_K8_FROZEN_2026-11-06.md)" \
+            "$(git hash-object docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_VISITEDPOOL64_DUAL_K8_FROZEN_2026-11-06.md reports/old-frozen.md
+          cp docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md reports/ready-frozen.md
+          cat reports/cross_source_actual_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Retain every matched original source contrast, including adverse cases
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visitedpool64-cross-source-fourarm-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
