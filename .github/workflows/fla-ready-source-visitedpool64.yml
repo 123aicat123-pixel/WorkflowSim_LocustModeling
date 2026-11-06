@@ -1,0 +1,101 @@
+name: FLA READY-Fitness VisitedPool64 Dual Same-Genotype K8
+on:
+  push:
+    branches: [fla-baseline]
+    paths:
+      - '.github/workflows/fla-ready-source-visitedpool64.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  genuine-fla-history-and-physical-replays:
+    name: READY-fitness FLA 3030 visits and 64 physical mappings / ${{ matrix.workflow }} / ${{ matrix.speed }} / s${{ matrix.seed }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 110
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        workflow: [Montage_50, Montage_100]
+        speed: [default, staggered]
+        seed: [1701, 1702]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean Java source compile and both predictor regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/classes reports 'Output&Results'
+          find sources examples tests -type f -name '*.java' | sort > reports/source-list.txt
+          javac -nowarn -encoding UTF-8 -cp 'lib/*' -d build/classes @reports/source-list.txt
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.StageInAwareEvaluatorTest > reports/old-test.log
+          java -cp 'build/classes:lib/*' org.workflowsim.planning.ReadyQueueScheduleEvaluatorTest > reports/ready-test.log
+      - name: Full FLA-v12 READY fitness search, freeze visited sample, blind dual predictions and original simulator truth
+        shell: bash
+        run: |
+          set -euo pipefail
+          java -Dworkflowsim.planningStageInAware=true \
+            -Ddagfla.stagedReplayContext=true \
+            -Ddagfla.visitedPool64=true \
+            -Ddagfla.fixedTaskTrace=true \
+            -Ddagfla.useReadyQueueObjective=true \
+            -Ddagfla.evolutionFidelity=off \
+            -Ddagfla.dualModelMode=off \
+            -Ddagfla.fixedVmReadyPriority=fifo \
+            -Dliwsa.vmSpeedProfile='${{ matrix.speed }}' \
+            -Dliwsa.vmPriceProfile=default \
+            -cp 'build/classes:lib/*' \
+            org.workflowsim.examples.planning.FLAResearchExperiment \
+            '${{ matrix.workflow }}' '${{ matrix.seed }}' 30 100 \
+            reports/research v12-ready-visited-pool64 > reports/experiment.log 2>&1 || {
+              tail -150 reports/experiment.log; exit 1
+            }
+          test "$(($(wc -l < reports/research_pool64_frozen_predictions.csv) - 1))" -eq 64
+          test "$(($(wc -l < reports/research_pool64_true_replays.csv) - 1))" -eq 64
+          test "$(grep -c 'ORIGINAL_TRUE_POOL64_PASS' reports/experiment.log)" -eq 64
+          test "$(grep -c 'FROZEN_BEFORE_TRUTH' reports/experiment.log)" -eq 1
+          git rev-parse HEAD > reports/source-sha.txt
+          git hash-object docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md > reports/protocol-sha.txt
+          printf 'workflow=%s\nspeed=%s\nseed=%s\n' \
+            '${{ matrix.workflow }}' '${{ matrix.speed }}' '${{ matrix.seed }}' > reports/block-id.txt
+      - name: Preserve all original search, mapping, prediction and real-source outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visitedpool64-${{ matrix.workflow }}-${{ matrix.speed }}-s${{ matrix.seed }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
+  strict-independent-blind-actual-hv:
+    name: Same physical 64 K2 K4 K8 exact oracle and sham audit
+    needs: genuine-fla-history-and-physical-replays
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all eight complete genuine search and simulator original records
+        uses: actions/download-artifact@v4
+        with:
+          pattern: visitedpool64-*
+          path: original
+      - name: Verify immutable source and exact blinded K2 K4 K8 performance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          python3 -m py_compile scripts/fla_ready_source_visitedpool64_audit.py
+          python3 scripts/fla_visitedpool64_dual_k8_audit.py \
+            original reports "$GITHUB_SHA" \
+            "$(git hash-object docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md)" \
+            | tee reports/audit.log
+          git rev-parse HEAD > reports/audit-code-sha.txt
+          cp docs/FLA_READY_SOURCE_VISITEDPOOL64_FROZEN_2026-11-06.md reports/frozen-protocol.md
+          cat reports/visitedpool64_findings.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Archive favorable, zero and negative original source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visitedpool64-complete-exact-audit-${{ github.run_id }}
+          path: reports
+          retention-days: 90
+          if-no-files-found: warn
