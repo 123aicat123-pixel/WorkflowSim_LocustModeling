@@ -377,6 +377,12 @@ public final class FLAResearchExperiment {
                 if(x.simulated!=null)throw new IllegalStateException("Future real label leaked into candidate sampling");
                 visited.add(x.assignment);
             }
+            if(Boolean.getBoolean("dagfla.visitedPool64HistoryOnly")) {
+                // Passive no-simulator replay, reproducing full real FLA history
+                // and ORIGINAL source frozen sampled mapping identifiers.
+                FLAVisitedFullHistorySnapshot.run(wf,seed,prefix,visited,only.evals);
+                return;
+            }
             FLAVisitedPool64Experiment.run(wf,seed,prefix,visited,
                     only.stagedReplayTasks,only.stagedReplayVms,only.evals,only.searchMs);
             return;
