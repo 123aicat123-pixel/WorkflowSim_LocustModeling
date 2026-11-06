@@ -235,6 +235,7 @@ public final class FLAResearchExperiment {
                 if(pop!=30||gens!=100 || BUDGET_REPLAY_K!=0 ||
                    !"false".equals(System.getProperty("dagfla.useReadyQueueObjective","false")) ||
                    !Boolean.getBoolean("dagfla.stagedReplayContext") ||
+                   !Boolean.getBoolean("dagfla.visitedPool64") ||
                    !"off".equals(System.getProperty("dagfla.evolutionFidelity","off")) ||
                    !"off".equals(System.getProperty("dagfla.dualModelMode","off")))
                     throw new IllegalArgumentException("Frozen OLD-only visited-pool64 requires pop30/gen100, staged context, no K replay, no READY objective or mixed fidelity");
@@ -998,7 +999,8 @@ public final class FLAResearchExperiment {
     private static void appendAuditHistory(Run run,UnifiedCandidateRecorder.Capture cap) {
         if (SCREENING_AUDIT_N == 0 && BUDGET_REPLAY_K == 0 &&
             !Boolean.getBoolean("dagfla.fullVisitedPlannedNdReplay") &&
-            !Boolean.getBoolean("dagfla.exportVisitedObjectiveSpace")) return;
+            !Boolean.getBoolean("dagfla.exportVisitedObjectiveSpace") &&
+            !Boolean.getBoolean("dagfla.visitedPool64")) return;
         for (UnifiedCandidateRecorder.Event e : cap.uniqueEvents()) {
             run.allVisited.add(new Candidate(new double[]{e.makespan,e.cost},e.assignment));
         }
