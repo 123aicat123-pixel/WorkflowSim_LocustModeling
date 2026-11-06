@@ -1,0 +1,23 @@
+# Prospective full-search Montage speed-heterogeneity OLD/READY gate — frozen 2026-11-06
+
+**Freeze BEFORE new original full-search simulator labels.** Prior fixed-32, population-1, generations-0 physical mapping experiments found a positive READY *selection* signal ONLY on Montage_50/staggered across three deterministic VM price profiles. This is a **development-conditioned, hypothesis-driven** experiment; Montage is an already-seen DAG family and is **not an independent holdout**. The design tests whether that restricted selection signal transfers to real 3030-visit evolutionary search, not whether a novel algorithm has already been established.
+
+## Frozen factorial and budgets
+- DAG instance sizes: `Montage_50` and `Montage_100` (same familiar family; don't count as distinct families).
+- VM speed: `default` and `staggered`, unchanged synthetic MIPS factors 0.65/0.80/0.90/1.0 by within-tier VM ID.
+- VM price: **default only**, original source rates. Do not opportunistically choose convex/linear by the prior true HV gains.
+- Stochastic full-search random seeds **1601,1602**, new for this specific test, fixed in advance. Search seeds influence candidate generation; unlike the prior population=1 fixed mapping trials, they are actual optimization RNG inputs. Each DAG/speed/seed block is paired.
+- Predictor objective `old` = StageInAware evaluator; `ready` = opt-in `dagfla.useReadyQueueObjective=true`. Both use the same FIFO real runtime. `workflowsim.planningStageInAware=true` always, `dagfla.evolutionFidelity=off`, `dagfla.dualModelMode=off`.
+- Each matrix source job invokes TWO established search solvers: `DAG-Pareto-FLA[v12-hvbandit]` (parent, not a new optimizer) and `NSGA-II[costseed]`, via existing `FLAResearchExperiment ... v12-nsga-ready-pair`. Both solvers have exact 30 population × (100 generations plus initialization) = **3030 counted genotype visits per arm**, with same initial seeded assignments and the same source DAG. Their chosen genotype histories can differ, which is expected.
+- Exactly **8 independent actual FIFO WorkflowSim replays** per optimizer arm, chosen *only* by its own model's forecast-based `pareto-cover` over visited genotypes. No simulator label may enter full search or pre-replay ranking.
+- Four base blocks (2 DAG×2 VM speeds) ×2 seeds×2 predictors = **16 original source jobs**, each two solvers and K8; expected **256 original physical WorkflowSim replays**. This is new full search, not rerunning 32 frozen mapping policies.
+
+## Falsifiable analysis
+- Every quartet of algorithm×predictor treatments in a given DAG/speed/seed must have a **single 2D actual HV reference** `ref_i = 1.5 × max(all 32 actual replay objectives in that block) + 1e-6`; report sensitivity at 3.0× and shared objective signs. The references depend on each DAG/speed/seed and are never used for selection.
+- Normalized actual HV of eight replayed physical mapping points per solver (NOT the optimizer's total possible Pareto front). Reconstruct from the original simulator replay CSV, not summary's local per-job reference. Audit strict uniqueness of 8 physically distinct mappings per solver, original 3030 eval/captured eval counts, 30/100 pop/generation, 16 mandatory jobs, matching SHA and case identity, 2 algorithms, true objectives >0. Report planned outputs and search wall-clock (not equated to true compute cost).
+- Primary paired comparisons: (i) FLA READY − FLA OLD true HV, (ii) NSGA READY − NSGA OLD, (iii) FLA − NSGA within each predictor, (iv) interaction `(FLA_READY − FLA_OLD) − (NSGA_READY − NSGA_OLD)`. Report all per-block signed values, wins/ties/losses and absolute search time. Positive shared decoder effects in both solvers are **not** novel FLA-specific effects.
+- Treat two seeds and two DAG sizes as development pilot, not a 20+ seed or unseen-family publication test. No p-values or statistical generalization; avoid calling 32 objective observations statistical replicates. Preserve losses and nulls.
+- If new READY objective improves the fixed-32 selected maps but NOT real full search, this **falsifies transfer** and is scientifically useful. If benefit appears only in both solvers, credit predictor change, not FLA innovation. If benefit is only FLA, a larger preregistered random-seed and truly new-DAG test is required before claims.
+- Any code or CI failure is distinctly reported from a scientifically negative outcome. Exact code SHA and protocol blob SHA are retained; no cherry-picking source jobs and no post-outcome method tuning.
+
+**Only `fla-baseline` changes. `master` and standard user-facing algorithm behavior unchanged.**
