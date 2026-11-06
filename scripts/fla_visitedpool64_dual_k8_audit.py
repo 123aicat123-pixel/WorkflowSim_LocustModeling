@@ -35,7 +35,8 @@ def case_dir(folder):
         x[key]=val
     return (x["workflow"],x["speed"],x["seed"])
 
-def audit(root,out,source_sha,protocol_sha):
+def audit(root,out,source_sha,protocol_sha,source_kind="OLD"):
+    assert source_kind in ("OLD","READY")
     test_oracle()
     out.mkdir(parents=True,exist_ok=True)
     sources=sorted(root.glob("visitedpool64-*/research_pool64_frozen_predictions.csv"))
@@ -158,10 +159,10 @@ def audit(root,out,source_sha,protocol_sha):
     write(out/"all_48_blind_k_picks.csv",selections)
     write(out/"all_1536_random_permutation_choices.csv",shams)
     lines=[
-       "# Genuine OLD FLA-visited same64 genotype selection: original true WorkflowSim K2/K4/K8",
+       f"# Genuine {source_kind} FLA-visited same64 genotype selection: original true WorkflowSim K2/K4/K8",
        "",
        "**8 real FLA-v12 3030-visit searches; 512 identical-pool two-model physical simulator rows.**",
-       "Source candidate membership is frozen from OLD FLA evolution BEFORE model forecasts",
+       f"Source candidate membership is frozen from {source_kind} FLA evolution BEFORE model forecasts",
        "and original simulator labels. No new algorithm or independent untouched-family proof.",
        "",
        "| DAG | VM speed | Search seed | ND /64 | K | Shared /K | OLD actual HV | READY actual HV | ΔREADY−OLD | OLD regret | READY regret | Sham median |",
@@ -186,7 +187,7 @@ def audit(root,out,source_sha,protocol_sha):
        "give 64 statistically independent simulator experiments.",
        "Exact hindsight K oracles never selected simulator calls. This does not",
        "identify effects of READY-driven search trajectories; only offline",
-       "selection given a fixed, OLD-fitness FLA-visited sample."]
+       f"selection given a fixed, {source_kind}-fitness FLA-visited sample."]
     (out/"visitedpool64_findings.md").write_text("\n".join(lines)+"\n",encoding="utf-8")
     print("\n".join(lines))
 
